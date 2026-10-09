@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import { chromium } from '../src/app/node_modules/playwright-core/index.mjs';
+const browser = await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
+const page = await browser.newPage({viewport:{width:1320,height:900}});
+const errors=[];page.on('pageerror',e=>errors.push(e.message));
+try {
+ await page.goto('http://127.0.0.1:1420/');
+ await page.getByRole('button',{name:'添加频率平移',exact:true}).dragTo(page.locator('.empty-chain'));
+ assert.equal(await page.getByRole('article').count(),1,'drag from library inserts a real instance');
+ await page.getByRole('button',{name:'添加高通',exact:true}).click();
+ await page.getByRole('button',{name:'拖动高通，Alt 加上下方向键移动',exact:true}).dragTo(page.locator('.insert-slot').first());
+ assert.deepEqual(await page.getByRole('article').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['高通滤镜','频率平移滤镜']);
+ await page.getByRole('button',{name:'拖动高通，Alt 加上下方向键移动',exact:true}).focus();
+ await page.keyboard.press('Alt+ArrowDown');
+ assert.deepEqual(await page.getByRole('article').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),['频率平移滤镜','高通滤镜']);
+ await page.getByRole('button',{name:'在位置 1 插入滤镜',exact:true}).click();
+ await page.getByRole('button',{name:'添加增益',exact:true}).click();
+ assert.equal(await page.getByRole('article').first().getAttribute('aria-label'),'增益滤镜','plus button inserts at the chosen position');
+ await page.getByRole('button',{name:'删除增益',exact:true}).click();
+ await page.getByRole('spinbutton',{name:'平移量',exact:true}).fill('300');
+ await page.getByRole('spinbutton',{name:'平移量',exact:true}).press('Enter');
+ await page.getByRole('button',{name:'复制频率平移',exact:true}).click();
+ assert.equal(await page.getByRole('article').count(),3);
+ await page.getByRole('button',{name:'删除频率平移',exact:true}).last().click();
+ await page.getByLabel('保存当前管线',{exact:true}).fill('我的音色');
+ await page.getByRole('button',{name:'保存预设',exact:true}).click();
+ await page.waitForFunction(()=>localStorage.getItem('mic-preview')?.includes('我的音色'));
+ const before=await page.getByRole('article').count();
+ await page.reload();await page.getByRole('article').first().waitFor();
+ assert.equal(await page.getByRole('article').count(),before);
+ assert.equal(await page.getByRole('spinbutton',{name:'平移量',exact:true}).inputValue(),'300');
+ await page.screenshot({path:process.argv[2],fullPage:true});
+ await page.setViewportSize({width:390,height:844});
+ await page.screenshot({path:process.argv[3],fullPage:true});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'narrow viewport has no horizontal overflow');
+ assert.deepEqual(errors,[]);
+ console.log('PASS: drag insert/reorder, keyboard move, parameters, copy/delete, preset save/reload, desktop/narrow layout, no runtime errors.');
+} finally {await browser.close();}

@@ -1,0 +1,37 @@
+[package]
+name = "ismymicthatbad"
+version = "0.1.0"
+edition = "2021"
+default-run = "ismymicthatbad"
+
+[lib]
+name = "mic_engine"
+path = "src/lib.rs"
+
+[[test]]
+name = "audio_pipeline"
+path = "../../../tests/audio_pipeline.rs"
+
+[[test]]
+name = "hardware_latency"
+path = "../../../tests/hardware_latency.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cpal = "0.18"
+rtrb = "0.3"
+rubato = "0.16"
+biquad = "0.6"
+
+[features]
+custom-protocol = ['tauri/custom-protocol']
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

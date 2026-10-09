@@ -1,0 +1,96 @@
+[
+  {
+    "type": "frequency",
+    "name": "频率平移",
+    "description": "按固定 Hz 移动频率，塑造金属音色。",
+    "color": "#b8a5e8",
+    "parameters": [
+      {
+        "key": "shift_hz",
+        "label": "平移量",
+        "unit": "Hz",
+        "min": -1000,
+        "max": 1000,
+        "step": 1,
+        "default": 0
+      }
+    ]
+  },
+  {
+    "type": "highpass",
+    "name": "高通",
+    "description": "保留高频，削减低频轰鸣。",
+    "color": "#e2bd7a",
+    "parameters": [
+      {
+        "key": "cutoff",
+        "label": "截止频率",
+        "unit": "Hz",
+        "min": 20,
+        "max": 20000,
+        "step": 1,
+        "default": 80
+      }
+    ]
+  },
+  {
+    "type": "lowpass",
+    "name": "低通",
+    "description": "保留低频，收窄高频细节。",
+    "color": "#80b7dd",
+    "parameters": [
+      {
+        "key": "cutoff",
+        "label": "截止频率",
+        "unit": "Hz",
+        "min": 20,
+        "max": 20000,
+        "step": 1,
+        "default": 8000
+      }
+    ]
+  },
+  {
+    "type": "gain",
+    "name": "增益",
+    "description": "调整这一步的信号强度。",
+    "color": "#79c8b0",
+    "parameters": [
+      {
+        "key": "gain_db",
+        "label": "增益",
+        "unit": "dB",
+        "min": -24,
+        "max": 12,
+        "step": 0.5,
+        "default": 0
+      }
+    ]
+  },
+  {
+    "type": "distortion",
+    "name": "失真",
+    "description": "柔和饱和，让声音更有颗粒感。",
+    "color": "#e69f9c",
+    "parameters": [
+      {
+        "key": "drive_db",
+        "label": "驱动",
+        "unit": "dB",
+        "min": 0,
+        "max": 24,
+        "step": 0.5,
+        "default": 6
+      },
+      {
+        "key": "mix",
+        "label": "混合",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "default": 25
+      }
+    ]
+  }
+]

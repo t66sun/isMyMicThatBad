@@ -1,0 +1,4 @@
+VB-CABLE is a separate VB-Audio product and Donationware. All participations are welcome.
+Origin: https://vb-audio.com/Cable/
+Licensing/distribution: https://vb-audio.com/Services/licensing.htm
+The official driver requires administrator privileges and a restart after installation.

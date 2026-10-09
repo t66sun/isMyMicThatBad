@@ -1,0 +1,65 @@
+{
+  "retrieved_on": "2026-10-08",
+  "repositories": [
+    {
+      "name": "timbre",
+      "url": "https://github.com/GoncaloCalvo/timbre.git",
+      "path": "repos/timbre",
+      "branch": "main",
+      "commit": "3ffa62dd756d509417715d15e49af97508e6237e",
+      "checkout": "full checkout, shallow history",
+      "submodules_initialized": false,
+      "code_executed": false
+    },
+    {
+      "name": "voxshift",
+      "url": "https://github.com/why-xdd/voxshift.git",
+      "path": "repos/voxshift",
+      "branch": "main",
+      "commit": "0c82b91e2e2aaa20cbae6a975b27f28173380fa6",
+      "checkout": "full checkout, shallow history",
+      "submodules_initialized": false,
+      "code_executed": false
+    },
+    {
+      "name": "MicLayer",
+      "url": "https://github.com/badoomtch/MicLayer.git",
+      "path": "repos/MicLayer",
+      "branch": "main",
+      "commit": "25a7586fc202da35f64635ae10b168999bc5a6a7",
+      "checkout": "full checkout, shallow history",
+      "submodules_initialized": false,
+      "code_executed": false
+    },
+    {
+      "name": "easyeffects",
+      "url": "https://github.com/wwmm/easyeffects.git",
+      "path": "repos/easyeffects",
+      "branch": "master",
+      "commit": "12dc1c6ac322a2378f40a811226af59e00053731",
+      "checkout": "full checkout, shallow history",
+      "submodules_initialized": false,
+      "code_executed": false
+    },
+    {
+      "name": "noise-suppression-for-voice",
+      "url": "https://github.com/werman/noise-suppression-for-voice.git",
+      "path": "repos/noise-suppression-for-voice",
+      "branch": "master",
+      "commit": "9c4e5c28d8950e2cef837d8a0abd36c2fd9b5c2d",
+      "checkout": "full checkout, shallow history",
+      "submodules_initialized": false,
+      "code_executed": false
+    },
+    {
+      "name": "Windows-driver-samples",
+      "url": "https://github.com/microsoft/Windows-driver-samples.git",
+      "path": "repos/Windows-driver-samples",
+      "branch": "main",
+      "commit": "2dc3fd3a0cc84a2933f2194e7ec0871584979071",
+      "checkout": "sparse audio/sysvad and root files; shallow history, blob:none",
+      "submodules_initialized": false,
+      "code_executed": false
+    }
+  ]
+}
