@@ -1,74 +1,226 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react';
-import { AudioLines, SlidersHorizontal, Radio, Waves, Volume2, Zap, GripVertical, Plus, Copy, Trash2, ArrowUp, ArrowDown, Play, Square, Headphones, RefreshCw, Save, ChevronRight, Cable, Power, AlertCircle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AudioLines, Play, Square, Settings, ChevronDown, X, RefreshCw, Save, CheckCircle2, AlertCircle, Cable, Trash2, Plus } from 'lucide-react';
 import * as api from './api';
-import { definitions, builtins, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, cloneChain, type Session, type FilterInstance, type FilterDefinition, type Parameter } from './model';
+import { definitions, builtins, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, cloneChain, type Session, type FilterInstance, type FilterDefinition } from './model';
+import { ChainEditor, type CardAction } from './ChainEditor';
+import { FilterIcon, Menu, ParameterControl, WindowControls } from './ui';
+import { version } from '../package.json';
 
-const icons: Record<string, typeof Waves> = {frequency:Waves,highpass:SlidersHorizontal,lowpass:Radio,gain:Volume2,distortion:Zap};
-function ParameterControl({node,parameter,onChange}:{node:FilterInstance;parameter:Parameter;onChange:(key:string,value:number)=>void}) {
-  const value = node.params[parameter.key];
-  const [draft,setDraft] = useState(String(value));
-  const input = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (document.activeElement !== input.current) setDraft(String(value)); },[value]);
-  const commit = () => { const parsed=Number(draft); const next=Number.isFinite(parsed) && draft.trim() ? Math.max(parameter.min,Math.min(parameter.max,parsed)) : value; setDraft(String(next)); onChange(parameter.key,next); };
-  return <div className="parameter"><div className="parameter-title"><label htmlFor={node.id+parameter.key}>{parameter.label}</label><div className="number-value"><input ref={input} id={node.id+parameter.key} type="number" min={parameter.min} max={parameter.max} step={parameter.step} value={draft} onChange={e=>setDraft(e.target.value)} onBlur={commit} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur();}}/><span>{parameter.unit}</span></div></div><input aria-label={parameter.label+'滑块'} type="range" min={parameter.min} max={parameter.max} step={parameter.step} value={value} onChange={e=>{const v=Number(e.target.value);setDraft(String(v));onChange(parameter.key,v);}}/><div className="range-label"><span>{parameter.min.toLocaleString()}</span><span>{parameter.max.toLocaleString()}</span></div></div>;
+function Meter({ label, value }: { label: string; value: number }) {
+  return <div className="meter"><div><span>{label}</span><span>{value > 0 ? (20 * Math.log10(value)).toFixed(1) + ' dB' : '−∞ dB'}</span></div>
+    <div className="meter-track"><span style={{ width: Math.min(100, Math.max(0, (20 * Math.log10(Math.max(value, .001)) + 60) / 60 * 100)) + '%' }} /></div></div>;
 }
-function Meter({label,value}:{label:string;value:number}) {
-  return <div className="meter"><div><span>{label}</span><strong>{value>0 ? (20*Math.log10(value)).toFixed(1)+' dB' : '−∞ dB'}</strong></div><div className="meter-track"><span style={{width:Math.min(100,Math.max(0,(20*Math.log10(Math.max(value,0.001))+60)/60*100))+'%'}}/></div></div>;
-}
+
 export default function App() {
-  const [session,setSession]=useState<Session>({...emptySession});
-  const [devices,setDevices]=useState<api.Device[]>([]);
-  const [ready,setReady]=useState(false);
-  const [status,setStatus]=useState<api.Status>(api.stopped);
-  const [error,setError]=useState('');
-  const [notice,setNotice]=useState('');
-  const [busy,setBusy]=useState(false);
-  const [presetName,setPresetName]=useState('');
-  const [dropSlot,setDropSlot]=useState<number|null>(null);
-  const [insertAt,setInsertAt]=useState<number|null>(null);
-  const saveTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
-  const chainTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
-  useEffect(()=>{ let active=true; Promise.all([api.load(),api.devices()]).then(([saved,list])=>{
-    if(!active)return;
-    const restored={...saved.session};
-    if(!restored.inputId)restored.inputId=list.find(d=>d.input&&d.isDefault&&!d.name.includes('CABLE'))?.id??list.find(d=>d.input&&!d.name.includes('CABLE'))?.id??'';
-    if(!restored.outputId)restored.outputId=list.find(d=>!d.input&&d.name.includes('CABLE Input'))?.id??'';
-    if(!restored.monitorId)restored.monitorId=list.find(d=>!d.input&&d.isDefault&&!d.name.includes('CABLE'))?.id??'';
-    setDevices(list);setSession(restored);setNotice(saved.warning??'');setReady(true);
-  }).catch(e=>{if(active){setError(String(e));}});
-  return()=>{active=false;};},[]);
-  useEffect(()=>{if(!ready)return; if(saveTimer.current)clearTimeout(saveTimer.current);saveTimer.current=setTimeout(()=>{api.save(session).catch(e=>setError('保存失败：'+String(e)));},350);return()=>{if(saveTimer.current)clearTimeout(saveTimer.current);};},[session,ready]);
-  useEffect(()=>{if(!ready)return;if(chainTimer.current)clearTimeout(chainTimer.current);chainTimer.current=setTimeout(()=>{api.chain(session.chain).catch(e=>setError('滤镜更新失败：'+String(e)));},25);return()=>{if(chainTimer.current)clearTimeout(chainTimer.current);};},[session.chain,ready]);
-  useEffect(()=>{if(!api.native)return;let active=true;const timer=setInterval(()=>{api.status().then(s=>{if(active){setStatus(s);if(s.running)setSession(previous=>previous.monitoring===s.monitoring?previous:{...previous,monitoring:s.monitoring});}}).catch(e=>{if(active)setError(String(e));});},200);return()=>{active=false;clearInterval(timer);};},[]);
-  const changeChain=(chain:FilterInstance[])=>{setError('');setSession(s=>({...s,chain}));};
-  const addFilter=(definition:FilterDefinition)=>{if(session.chain.length>=64)return;changeChain(insertFilter(session.chain,definition,insertAt??session.chain.length));setInsertAt(null);};
-  const refresh=async()=>{try{setDevices(await api.devices());}catch(e){setError(String(e));}};
-  const toggleAudio=async()=>{setBusy(true);setError('');try{if(status.running)await api.stop();else await api.start(session);setStatus(await api.status());}catch(e){setError(String(e));}finally{setBusy(false);}};
-  const toggleMonitor=async(enabled:boolean)=>{try{await api.monitoring(enabled);setSession(s=>({...s,monitoring:enabled}));}catch(e){setError(String(e));}};
-  const install=async()=>{setBusy(true);try{setNotice(await api.installCable());}catch(e){setError(String(e));}finally{setBusy(false);}};
-  const drag=(e:DragEvent,payload:string)=>{e.dataTransfer.setData('application/x-mic-filter',payload);e.dataTransfer.effectAllowed='copyMove';};
-  const drop=(e:DragEvent,index:number)=>{e.preventDefault();setDropSlot(null);const text=e.dataTransfer.getData('application/x-mic-filter');if(text.startsWith('library:')){const def=definitions.find(d=>d.type===text.slice(8));if(def&&session.chain.length<64)changeChain(insertFilter(session.chain,def,index));}else if(text.startsWith('chain:')){const id=text.slice(6);const from=session.chain.findIndex(n=>n.id===id);if(from>=0)changeChain(moveFilter(session.chain,id,index-(from<index?1:0)));}};
-  const savePreset=()=>{if(!presetName.trim()||session.presets.length>=100)return;setSession(s=>({...s,presets:[...s.presets,{id:crypto.randomUUID(),name:presetName.trim(),chain:cloneChain(s.chain)}]}));setPresetName('');};
-  const outputs=devices.filter(d=>!d.input),inputs=devices.filter(d=>d.input);
-  const cablePresent=outputs.some(d=>d.name.includes('CABLE Input'));
-  const selectedMissing=(id:string,list:api.Device[])=>id&&!list.some(d=>d.id===id);
-  const deviceSelect=(key:'inputId'|'outputId'|'monitorId',label:string,list:api.Device[],placeholder:string)=><label className="device-label">{label}<select aria-label={label} value={session[key]} disabled={status.running||!api.native} onChange={e=>setSession(s=>({...s,[key]:e.target.value}))}><option value="">{placeholder}</option>{selectedMissing(session[key],list)?<option value={session[key]}>已保存设备不可用，请重新选择</option>:null}{list.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>;
-  const slot=(index:number)=><div key={'slot-'+index} className={'insert-slot '+(dropSlot===index||insertAt===index?'drop-active':'')} onDragOver={e=>{e.preventDefault();setDropSlot(index);}} onDragLeave={()=>setDropSlot(null)} onDrop={e=>drop(e,index)}><span/><button aria-label={'在位置 '+(index+1)+' 插入滤镜'} title="选择此位置，再点击左侧滤镜插入" onClick={()=>{setInsertAt(index);document.getElementById('filter-library')?.focus();}}><Plus size={14}/></button><span/></div>;
+  const [session, setSession] = useState<Session>({ ...emptySession });
+  const [devices, setDevices] = useState<api.Device[]>([]);
+  const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState<api.Status>(api.stopped);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
+  const [saveState, setSaveState] = useState('正在载入配置');
+  const [presetName, setPresetName] = useState('');
+  const settings = useRef<HTMLDialogElement>(null);
+  const presetDialog = useRef<HTMLDialogElement>(null);
+  const selected = session.chain.find(node => node.id === selectedId) ?? session.chain[0] ?? null;
+  const definition = selected ? definitions.find(d => d.type === selected.type)! : null;
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([api.load(), api.devices()]).then(([saved, list]) => {
+      if (!active) return;
+      const restored = { ...saved.session };
+      if (!restored.inputId) restored.inputId = list.find(d => d.input && d.isDefault && !d.name.includes('CABLE'))?.id ?? list.find(d => d.input && !d.name.includes('CABLE'))?.id ?? '';
+      if (!restored.outputId) restored.outputId = list.find(d => !d.input && d.name.includes('CABLE Input'))?.id ?? '';
+      if (!restored.monitorId) restored.monitorId = list.find(d => !d.input && d.isDefault && !d.name.includes('CABLE'))?.id ?? '';
+      setDevices(list); setSession(restored); setSelectedId(restored.chain[0]?.id ?? null);
+      setNotice(saved.warning ?? ''); setReady(true);
+    }).catch(error => { if (active) setError(String(error)); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
+    let active = true;
+    setSaveState('正在保存');
+    const timer = setTimeout(() => api.save(session).then(() => { if (active) setSaveState('配置已保存'); })
+      .catch(error => { if (active) { setSaveState('保存失败'); setError('保存失败：' + String(error)); } }), 350);
+    return () => { active = false; clearTimeout(timer); };
+  }, [session, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    const timer = setTimeout(() => api.chain(session.chain).catch(error => setError('滤镜更新失败：' + String(error))), 25);
+    return () => clearTimeout(timer);
+  }, [session.chain, ready]);
+  useEffect(() => {
+    if (!api.native) return;
+    let active = true;
+    const timer = setInterval(() => api.status().then(next => {
+      if (!active) return;
+      setStatus(next);
+      if (next.running) setSession(previous => previous.monitoring === next.monitoring ? previous : { ...previous, monitoring: next.monitoring });
+    }).catch(error => { if (active) setError(String(error)); }), 200);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
+
+  const select = useCallback((id: string | null, focus = false) => {
+    setSelectedId(id);
+    if (id && focus) requestAnimationFrame(() => document.getElementById('select-' + id)?.focus({ preventScroll: true }));
+  }, []);
+  const changeChain = useCallback((chain: FilterInstance[]) => {
+    setError('');
+    setSession(previous => ({ ...previous, chain }));
+    setAnnouncement('声音管线已更新，共 ' + chain.length + ' 个滤镜。');
+  }, []);
+  const add = useCallback((definition: FilterDefinition, index: number) => {
+    if (session.chain.length >= 64) { setNotice('最多可以加入 64 个滤镜。'); return; }
+    const chain = insertFilter(session.chain, definition, index);
+    changeChain(chain);
+    select(chain[Math.max(0, Math.min(index, chain.length - 1))].id, true);
+  }, [session.chain, changeChain, select]);
+  const action = useCallback((id: string, action: CardAction) => {
+    const index = session.chain.findIndex(node => node.id === id);
+    if (index < 0) return;
+    let chain = session.chain;
+    if (action === 'bypass') chain = chain.map(node => node.id === id ? { ...node, enabled: !node.enabled } : node);
+    else if (action === 'duplicate') {
+      if (chain.length >= 64) { setNotice('最多可以加入 64 个滤镜。'); return; }
+      chain = duplicateFilter(chain, id);
+      select(chain[index + 1].id, true);
+    } else if (action === 'delete') {
+      chain = removeFilter(chain, id);
+      if (selected?.id === id) select(chain[Math.min(index, chain.length - 1)]?.id ?? null, true);
+    } else {
+      chain = moveFilter(chain, id, index + (action === 'previous' ? -1 : 1));
+      select(id, true);
+    }
+    changeChain(chain);
+  }, [session.chain, selected?.id, changeChain, select]);
+  const applyPreset = (chain: FilterInstance[]) => {
+    const next = cloneChain(chain);
+    changeChain(next);
+    select(next[0]?.id ?? null);
+  };
+  const presetLabel = useMemo(() => {
+    const matches = [...builtins, ...session.presets].find(p => p.chain.length === session.chain.length && p.chain.every((node, index) => {
+      const other = session.chain[index];
+      return node.type === other.type && node.enabled === other.enabled && Object.keys(node.params).every(key => node.params[key] === other.params[key]);
+    }));
+    return matches?.name ?? '自定义';
+  }, [session.chain, session.presets]);
+  const toggleAudio = async () => {
+    setBusy(true); setError('');
+    try { if (status.running) await api.stop(); else await api.start(session); setStatus(await api.status()); }
+    catch (error) { setError(String(error)); }
+    finally { setBusy(false); }
+  };
+  const toggleMonitor = async (enabled: boolean) => {
+    setError('');
+    try { if (status.running) await api.monitoring(enabled); setSession(previous => ({ ...previous, monitoring: enabled })); }
+    catch (error) { setError(String(error)); }
+  };
+  const refresh = async () => {
+    try { setDevices(await api.devices()); } catch (error) { setError(String(error)); }
+  };
+  const install = async () => {
+    setBusy(true);
+    try { setNotice(await api.installCable()); } catch (error) { setError(String(error)); } finally { setBusy(false); }
+  };
+  const savePreset = () => {
+    if (!presetName.trim() || session.presets.length >= 100) return;
+    setSession(previous => ({ ...previous, presets: [...previous.presets, { id: crypto.randomUUID(), name: presetName.trim(), chain: cloneChain(previous.chain) }] }));
+    setPresetName('');
+    presetDialog.current?.close();
+  };
+  const inputs = devices.filter(d => d.input);
+  const outputs = devices.filter(d => !d.input);
+  const inputName = devices.find(d => d.id === session.inputId)?.name ?? '选择麦克风';
+  const outputName = devices.find(d => d.id === session.outputId)?.name ?? '选择输出';
+  const cablePresent = outputs.some(d => d.name.includes('CABLE Input'));
+  const deviceSelect = (key: 'inputId' | 'outputId' | 'monitorId', label: string, list: api.Device[], placeholder: string) =>
+    <label className="device-label">{label}<select aria-label={label} value={session[key]} disabled={status.running || !api.native}
+      onChange={event => setSession(previous => ({ ...previous, [key]: event.target.value }))}>
+      <option value="">{placeholder}</option>
+      {session[key] && !list.some(d => d.id === session[key]) ? <option value={session[key]}>已保存设备不可用，请重新选择</option> : null}
+      {list.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+    </select></label>;
+
   return <div className="app-shell">
-    <header className="app-header"><div className="brand"><div className="brand-mark"><AudioLines size={25}/></div><div><h1>isMyMicThatBad<span>音频工作台</span></h1><p>把声音调成你的样子</p></div></div><div className="header-right"><span className={'status-pill '+(status.running?'is-live':'')}><i/>{status.running?'正在处理':'已停止'}</span><button className={'transport '+(status.running?'transport-stop':'')} disabled={busy||!ready||!api.native||(!status.running&&(!session.inputId||!session.outputId))} onClick={toggleAudio}>{status.running?<Square size={16}/>:<Play size={16}/>} {busy?'请稍候':status.running?'停止处理':'开始处理'}</button></div></header>
-    {!api.native?<div className="preview-notice"><AlertCircle size={16}/><span>编辑器预览 · 可以编辑滤镜和预设；真实麦克风输入与输出请使用桌面应用。</span></div>:null}
-    {error||status.error?<div role="alert" className="error-banner"><AlertCircle size={17}/>{error||status.error}{!ready?<button onClick={()=>window.location.reload()}>重新载入</button>:error?<button onClick={()=>setError('')}>关闭提示</button>:null}</div>:null}
-    {notice?<div role="status" className="notice-banner">{notice}<button onClick={()=>setNotice('')}>知道了</button></div>:null}
-    <section className="routing-panel" aria-label="音频路由"><div className="routing-icon"><Cable size={22}/></div>{deviceSelect('inputId','麦克风输入',inputs,'选择真实麦克风')}<ChevronRight className="route-arrow" size={18}/><div className="route-engine"><span>滤镜管线</span><strong>{session.chain.length} 个滤镜</strong></div><ChevronRight className="route-arrow" size={18}/>{deviceSelect('outputId','处理后输出',outputs,'选择 CABLE Input')}<button className="icon-button refresh" title="刷新音频设备" aria-label="刷新音频设备" disabled={status.running} onClick={refresh}><RefreshCw size={17}/></button></section>
+    <header className="titlebar glass">
+      <div className="titlebar-grab" data-tauri-drag-region><AudioLines size={25} strokeWidth={1.7} aria-hidden="true" /><h1>isMyMicThatBad</h1></div>
+      <Menu label="声音预设" content={<><span>{presetLabel}</span><ChevronDown size={14} aria-hidden="true" /></>} className="preset-trigger" width={248} disabled={dragging}>
+        <span className="menu-heading">声音预设</span>
+        {builtins.map(p => <button key={p.id} role="menuitem" onClick={() => applyPreset(p.chain)}>{p.name}<small>{p.chain.length === 0 ? '直接输出' : p.chain.length + ' 个滤镜'}</small></button>)}
+        {session.presets.length ? <span className="menu-heading">我的预设</span> : null}
+        {session.presets.map(p => <button key={p.id} role="menuitem" onClick={() => applyPreset(p.chain)}>{p.name}<small>{p.chain.length} 个滤镜</small></button>)}
+        <div className="menu-divider" /><button role="menuitem" disabled={session.presets.length >= 100} onClick={() => presetDialog.current?.showModal()}><Save size={16} aria-hidden="true" />保存当前管线</button>
+      </Menu>
+      <button className="route-summary" title={inputName + ' → ' + outputName} aria-label="打开音频路由设置" disabled={dragging} onClick={() => settings.current?.showModal()}>
+        <span>{inputName.startsWith('Microphone') ? '麦克风' : inputName}</span><span aria-hidden="true">→</span><span>{outputName.startsWith('CABLE Input') ? 'CABLE Input' : outputName}</span>
+      </button>
+      <span className="status-label">{status.running ? '正在处理' : '已停止'}</span>
+      <button className="transport" disabled={busy || !ready || !api.native || (!status.running && (!session.inputId || !session.outputId))} onClick={toggleAudio}>
+        {status.running ? <Square size={15} aria-hidden="true" /> : <Play size={16} fill="currentColor" aria-hidden="true" />}
+        {busy ? '请稍候' : status.running ? '停止处理' : '开始处理'}
+      </button>
+      <button className="settings-button icon-button" aria-label="打开设置" title="设备、监听与缓冲" disabled={dragging} onClick={() => settings.current?.showModal()}><Settings size={21} strokeWidth={1.7} aria-hidden="true" /></button>
+      <WindowControls onError={setError} />
+    </header>
+    {!api.native ? <div className="preview-notice"><span>编辑器预览</span>真实音频请使用桌面应用</div> : null}
+    {error || status.error ? <div role="alert" className="message-banner error-banner"><AlertCircle size={17} aria-hidden="true" /><span>{error || status.error}</span>
+      {!ready ? <button onClick={() => window.location.reload()}>重新载入</button> : error ? <button aria-label="关闭错误提示" onClick={() => setError('')}><X size={15} aria-hidden="true" /></button> : null}</div> : null}
+    {notice ? <div role="status" className="message-banner"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice('')}><X size={15} aria-hidden="true" /></button></div> : null}
     <main className="workspace">
-      <aside className="library-panel" id="filter-library" tabIndex={-1}><div className="panel-heading"><h2>滤镜库</h2><span>{definitions.length} 种处理</span></div><p className="panel-help">{insertAt===null?'拖入管线，或点击添加。':'将下一个滤镜插入位置 '+(insertAt+1)+'。'}</p><div className="library-list">{definitions.map(d=>{const Icon=icons[d.type]??SlidersHorizontal;return <button key={d.type} className="library-card" draggable onDragStart={e=>drag(e,'library:'+d.type)} onClick={()=>addFilter(d)} disabled={session.chain.length>=64} aria-label={'添加'+d.name} style={{'--filter-color':d.color} as React.CSSProperties}><div className="library-icon"><Icon size={21}/></div><div><strong>{d.name}</strong><p>{d.description}</p></div><Plus size={16}/></button>;})}</div><div className="library-note"><SlidersHorizontal size={18}/><p>同一种滤镜可以重复使用。每张卡片的参数独立保存。</p></div></aside>
-      <section className="chain-panel" aria-label="滤镜管线"><div className="panel-heading"><div><h2>你的声音管线</h2><p className="panel-help">从上到下依次处理，修改实时生效。</p></div><span className="chain-count">{session.chain.length.toString().padStart(2,'0')}</span></div><div className="endpoint"><div className="endpoint-dot"/><span>原始输入</span><small>干净的起点</small></div><div className="pipeline">
-      {slot(0)}
-      {session.chain.length===0?<div className={'empty-chain '+(dropSlot===0?'drop-active':'')} onDragOver={e=>{e.preventDefault();setDropSlot(0);}} onDrop={e=>drop(e,0)}><div><Plus size={28}/></div><h3>加入你的第一个滤镜</h3><p>把左侧的卡片拖进来，开始塑造声音。</p><small>空管线会直接输出原音</small></div>:session.chain.map((node,index)=>{const d=definitions.find(x=>x.type===node.type)!;const Icon=icons[node.type]??SlidersHorizontal;return <div key={node.id}><article className={'effect-card '+(!node.enabled?'bypassed':'')} aria-label={d.name+'滤镜'} style={{'--filter-color':d.color} as React.CSSProperties} onKeyDown={e=>{if(e.altKey&&(e.key==='ArrowUp'||e.key==='ArrowDown')){e.preventDefault();changeChain(moveFilter(session.chain,node.id,index+(e.key==='ArrowUp'?-1:1)));}}}><div className="effect-header"><button className="drag-handle icon-button" draggable onDragStart={e=>drag(e,'chain:'+node.id)} aria-label={'拖动'+d.name+'，Alt 加上下方向键移动'} title="拖动排序；Alt + 上下方向键移动"><GripVertical size={17}/></button><span className="effect-index">{String(index+1).padStart(2,'0')}</span><div className="effect-icon"><Icon size={18}/></div><h3>{d.name}</h3><button className={'power-button '+(node.enabled?'enabled':'')} aria-label={(node.enabled?'旁路':'启用')+d.name} aria-pressed={node.enabled} onClick={()=>changeChain(session.chain.map(n=>n.id===node.id?{...n,enabled:!n.enabled}:n))}><Power size={15}/><span>{node.enabled?'启用':'旁路'}</span></button><div className="card-actions"><button className="icon-button" aria-label={'上移'+d.name} disabled={index===0} onClick={()=>changeChain(moveFilter(session.chain,node.id,index-1))}><ArrowUp size={15}/></button><button className="icon-button" aria-label={'下移'+d.name} disabled={index===session.chain.length-1} onClick={()=>changeChain(moveFilter(session.chain,node.id,index+1))}><ArrowDown size={15}/></button><button className="icon-button" aria-label={'复制'+d.name} disabled={session.chain.length>=64} onClick={()=>changeChain(duplicateFilter(session.chain,node.id))}><Copy size={15}/></button><button className="icon-button delete-button" aria-label={'删除'+d.name} onClick={()=>changeChain(removeFilter(session.chain,node.id))}><Trash2 size={15}/></button></div></div><div className="effect-body">{d.parameters.map(p=><ParameterControl key={p.key} node={node} parameter={p} onChange={(key,value)=>changeChain(session.chain.map(n=>n.id===node.id?{...n,params:{...n.params,[key]:value}}:n))}/>)}</div></article>{slot(index+1)}</div>;})}
-      </div><div className="endpoint output-endpoint"><div className="endpoint-dot"/><span>处理后输出</span><small>{status.running?'已送往所选设备':'准备就绪后开始处理'}</small></div></section>
-      <aside className="right-panel"><section className="monitor-panel"><div className="panel-heading"><h2>信号与监听</h2><Headphones size={18}/></div><Meter label="输入电平" value={status.inputPeak}/><Meter label="输出电平" value={status.outputPeak}/><div className="monitor-switch"><label><input type="checkbox" checked={session.monitoring} disabled={!session.monitorId||!api.native||busy} onChange={e=>toggleMonitor(e.target.checked)}/><span>耳机监听</span></label><small>{session.monitoring?'开启':'关闭'}</small></div>{deviceSelect('monitorId','监听设备',outputs.filter(d=>d.id!==session.outputId),'选择耳机')}<label className="buffer-control">缓冲目标 <span>{session.bufferMs} ms</span><input aria-label="缓冲目标" disabled={status.running} type="range" min="5" max="30" step="1" value={session.bufferMs} onChange={e=>setSession(s=>({...s,bufferMs:Number(e.target.value)}))}/></label><p className="hint">出现断音时提高缓冲。系统与驱动延迟以回环测量为准。</p></section>
-      <section className="preset-panel"><div className="panel-heading"><h2>声音预设</h2><span>{builtins.length+session.presets.length}</span></div><div className="preset-list">{builtins.map(p=><button key={p.id} className="preset-card" onClick={()=>changeChain(cloneChain(p.chain))}><span className="preset-symbol">{p.id==='builtin-raw'?<AudioLines size={19}/>:p.id==='builtin-metal'?<Zap size={19}/>:<Radio size={19}/>}</span><span><strong>{p.name}</strong><small>{p.chain.length===0?'直接输出':p.chain.length+' 个滤镜'}</small></span><ChevronRight size={15}/></button>)}</div><div className="save-preset"><label htmlFor="preset-name">保存当前管线</label><div><input id="preset-name" placeholder="给声音起个名字" maxLength={80} value={presetName} onChange={e=>setPresetName(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')savePreset();}}/><button aria-label="保存预设" disabled={!presetName.trim()||session.presets.length>=100} onClick={savePreset}><Save size={17}/></button></div></div>{session.presets.length>0?<div className="user-presets"><h3>我的预设</h3>{session.presets.map(p=><div className="user-preset" key={p.id}><button onClick={()=>changeChain(cloneChain(p.chain))}>{p.name}<small>{p.chain.length} 个滤镜</small></button><button className="icon-button" aria-label={'删除预设'+p.name} onClick={()=>setSession(s=>({...s,presets:s.presets.filter(x=>x.id!==p.id)}))}><Trash2 size={14}/></button></div>)}</div>:null}</section>
-      {api.native&&!cablePresent?<section className="cable-panel"><Cable size={20}/><h3>连接到其他应用</h3><p>尚未检测到 VB-CABLE。安装后，在本应用选择 CABLE Input，在聊天软件选择 CABLE Output。</p><button disabled={busy} onClick={install}>安装随包附带的 VB-CABLE</button><small>需要管理员权限，并在安装后重启。VB-CABLE 是 VB-Audio 的 Donationware。<a href="https://vb-audio.com/Cable/" onClick={e=>{if(api.native){e.preventDefault();api.openCableSite().catch(error=>setError(String(error)));}}} target="_blank" rel="noreferrer">官方来源与捐赠</a></small></section>:null}</aside>
-    </main><footer className="app-footer"><span><span className="footer-dot"/>{ready?'配置自动保存':'正在载入配置'}</span><span>48 kHz 内部处理<span className="footer-divider"/>欠载 {status.underruns}<span className="footer-divider"/>溢出 {status.overflows}<span className="footer-divider"/>设备中断 {status.deviceXruns}</span><span>v0.1.0</span></footer>
+      <ChainEditor chain={session.chain} selectedId={selected?.id ?? null} onSelect={select} onChange={changeChain} onAdd={add} onAction={action} onDraggingChange={setDragging} />
+      <section className="inspector glass" aria-label="滤镜参数">
+        {selected && definition ? <>
+          <div className="inspector-identity"><div className="inspector-icon glass"><FilterIcon type={selected.type} size={34} /></div>
+            <div><h2>{definition.name}</h2><span>{selected.enabled ? '参数' : '已旁路 · 参数保留'}</span></div>
+          </div>
+          <fieldset className={'inspector-fields' + (definition.parameters.length > 1 ? ' multiple-parameters' : '')} disabled={dragging}><legend className="sr-only">{definition.name}参数</legend>
+            {definition.parameters.map(parameter => <ParameterControl key={selected.id + parameter.key} node={selected} parameter={parameter}
+              onChange={(key, value) => changeChain(session.chain.map(node => node.id === selected.id ? { ...node, params: { ...node.params, [key]: value } } : node))} />)}
+            <p className="inspector-description">{definition.description}</p>
+          </fieldset>
+        </> : <div className="inspector-empty"><FilterIcon type="custom" size={30} /><div><h2>选择一个滤镜</h2><p>参数会在这里显示</p></div></div>}
+      </section>
+    </main>
+    <footer className="app-footer"><span><CheckCircle2 size={16} aria-hidden="true" />{saveState}</span>
+      <span className="footer-health" title={'欠载 ' + status.underruns + '，溢出 ' + status.overflows + '，设备中断 ' + status.deviceXruns}>
+        {status.underruns || status.overflows || status.deviceXruns ? <>欠载 {status.underruns} · 溢出 {status.overflows} · 设备中断 {status.deviceXruns}</> : null}
+      </span><span className="footer-meta">48 kHz<span>v{version}</span></span>
+    </footer>
+    <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
+
+    <dialog ref={settings} className="settings-dialog glass" aria-labelledby="settings-title">
+      <div className="dialog-heading"><h2 id="settings-title">设置</h2><button className="icon-button" aria-label="关闭设置" onClick={() => settings.current?.close()}><X size={20} aria-hidden="true" /></button></div>
+      <section className="settings-section"><div className="section-heading"><h3>音频路由</h3><button className="icon-button" aria-label="刷新音频设备" disabled={status.running} onClick={refresh}><RefreshCw size={17} aria-hidden="true" /></button></div>
+        {deviceSelect('inputId', '麦克风输入', inputs, '选择真实麦克风')}
+        {deviceSelect('outputId', '处理后输出', outputs, '选择 CABLE Input')}
+        <p className="hint">聊天软件的麦克风选择 CABLE Output。更换设备前请先停止处理。</p>
+      </section>
+      <section className="settings-section"><h3>监听与缓冲</h3>
+        {deviceSelect('monitorId', '监听设备', outputs.filter(d => d.id !== session.outputId), '选择耳机')}
+        <label className="monitor-switch"><span>耳机监听</span><input type="checkbox" checked={session.monitoring} disabled={!session.monitorId || !api.native || busy} onChange={event => toggleMonitor(event.target.checked)} /></label>
+        <label className="buffer-control">缓冲目标 <span>{session.bufferMs} ms</span><input aria-label="缓冲目标" disabled={status.running} type="range" min={5} max={30} step={1} value={session.bufferMs} onChange={event => setSession(previous => ({ ...previous, bufferMs: Number(event.target.value) }))} /></label>
+        <p className="hint">发生断音时提高缓冲。端到端延迟以回环测量为准。</p>
+        <Meter label="输入电平" value={status.inputPeak} /><Meter label="输出电平" value={status.outputPeak} />
+      </section>
+      {session.presets.length ? <section className="settings-section"><h3>我的预设</h3>{session.presets.map(p => <div className="saved-preset" key={p.id}><span>{p.name}</span><button className="icon-button" aria-label={'删除预设' + p.name} onClick={() => setSession(previous => ({ ...previous, presets: previous.presets.filter(item => item.id !== p.id) }))}><Trash2 size={16} aria-hidden="true" /></button></div>)}</section> : null}
+      {api.native && !cablePresent ? <section className="settings-section"><h3><Cable size={17} aria-hidden="true" />连接到其他应用</h3><p className="hint">尚未检测到 VB-CABLE。完成安装后重启 Windows。</p>
+        <button className="secondary-button" disabled={busy} onClick={install}>安装随包附带的 VB-CABLE</button>
+        <a href="https://vb-audio.com/Cable/" onClick={event => { if (api.native) { event.preventDefault(); api.openCableSite().catch(error => setError(String(error))); } }} target="_blank" rel="noreferrer">VB-Audio 官方来源与捐赠</a>
+      </section> : null}
+    </dialog>
+    <dialog ref={presetDialog} className="save-dialog glass" aria-labelledby="save-preset-title">
+      <div className="dialog-heading"><h2 id="save-preset-title">保存当前管线</h2><button className="icon-button" aria-label="取消保存预设" onClick={() => presetDialog.current?.close()}><X size={19} aria-hidden="true" /></button></div>
+      <form onSubmit={event => { event.preventDefault(); savePreset(); }}>
+        <label htmlFor="preset-name">预设名称</label><input id="preset-name" placeholder="给声音起个名字" maxLength={80} value={presetName} onChange={event => setPresetName(event.target.value)} autoFocus />
+        <button className="transport" type="submit" aria-label="保存预设" disabled={!presetName.trim() || session.presets.length >= 100}><Plus size={16} aria-hidden="true" />保存预设</button>
+      </form>
+    </dialog>
   </div>;
 }

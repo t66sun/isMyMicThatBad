@@ -2,6 +2,8 @@
 
 The application edits an ordered mono audio chain and routes a physical microphone to an installed VB-CABLE endpoint. React controls the pipeline; Rust owns all audio processing and device streams.
 
+The GitHub source tree excludes `research/` and the entire `src/app/src-tauri/` directory by the owner's publishing policy. The native modules described below remain available locally. A fresh GitHub checkout contains the frontend and first-party documentation/tests/scripts, but requires the separately retained Tauri backend to build the Windows application.
+
 ```mermaid
 flowchart LR
   Microphone[Physical microphone] --> Capture[WASAPI capture callback]
@@ -20,6 +22,7 @@ flowchart LR
 ```
 
 - `src/app/src/model.ts` owns card identity, insertion, ordering, duplication, presets and frontend settings validation. Instances have independent IDs and parameters.
+- `App.tsx` owns the persisted session, native audio commands and the fixed parameter inspector. `ChainEditor.tsx` owns a temporary drag preview with dnd-kit: pointer moves update only visual order; a valid drop commits once, while Escape/outside drops preserve the chain. Selection and drag state remain ephemeral. `ui.tsx` supplies numeric controls, native popover menus, neutral icons and Tauri window controls. Keyboard reordering uses Alt+arrows and menu actions.
 - `src/app/src/filters.json` defines the shared filter catalog and numeric parameter ranges. Rust validates the same metadata before constructing a chain.
 - `src/app/src-tauri/src/dsp.rs` implements frequency shift in Hz, high-pass, low-pass, gain and distortion. Parameter and bypass changes ramp over 10 ms. Frequency shift is additive translation, not musical pitch shifting.
 - `graph.rs` preserves processor state for parameter edits and warms/crossfades replacement chains over 20 ms. Delay compensation also crossfades when latency increases. Peak algorithm delay is retained until stop/start.

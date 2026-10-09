@@ -17,6 +17,8 @@ Use a single-context layout. Read `docs/agents/domain.md` before exploring domai
 
 - Stay on the current branch; inspect HEAD, staged, unstaged, and untracked changes at the start of each task.
 - Only the primary agent commits and operates on remotes; subagents deliver changes and verification evidence.
+- Keep commits limited to files authored for this project. Exclude `research/`, all `tauri/` and `src-tauri/` directories (including `src/app/src-tauri/`), cloned external repositories, and vendored third-party files, even when they are already tracked.
+- Stage explicit first-party file paths. Before committing, inspect `git diff --cached --name-only` and verify that no excluded paths are staged. For an explicitly requested tracking cleanup, excluded paths may appear only as deletions; retain their local files.
 - Automatically commit actual changes after applicable validation passes. Do not commit read-only work, unchanged content, or changes that fail validation.
 - Commit only task changes, preserving others' work and the original staging state. Clarify ownership when mixed changes cannot be reliably separated. Include both old-path deletions and new-path additions in migration commits.
 - Follow the existing commit style; otherwise use Conventional Commits.

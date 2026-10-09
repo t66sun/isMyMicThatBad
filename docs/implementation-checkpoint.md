@@ -1,47 +1,31 @@
 # Implementation checkpoint
 
-Resumed on 2026-10-09. The user authorized VB-CABLE installation and continuing the approved V1 plan. Latest delivery instructions supersede the previous no-first-commit restriction: produce only a portable ZIP, make one initial commit and push it to origin/master. Do not generate an application installer, Git tag or GitHub Release.
+Current milestone: v0.2.0 UI redesign, continued on 2026-10-09. The initial v0.1 commit is 654ac75 on master and its portable delivery remains intact. The current task implements the accepted monochrome frosted-glass concept directly in the Windows application.
 
-## Implemented
+## Current implementation
 
-- Tauri 2 / React / TypeScript card editor: drag insertion/reorder, keyboard movement, selected-position plus-button insertion, parameters, bypass, duplicate/delete, built-in and user presets, autosave.
-- Native CPAL/WASAPI microphone capture, VB-CABLE output, optional independent headphone monitoring, Tauri commands and persistent endpoint IDs.
-- Frequency shift in Hz, high-pass, low-pass, gain and distortion. Parameter/bypass ramps, chain warmup/crossfade and smooth delay-compensation changes.
-- Shared numeric metadata and a working compiled template with smoothed amount_db; registration instructions in docs/filter-development.md.
-- Preallocated sinc resampling and independent-clock drift control. Callbacks wake the DSP worker instead of periodic polling. A later probe measured Rust 1 ms sleep at 1.617 ms; the earlier 16 ms probe used .NET/PowerShell, so it is not a measurement of the Rust worker.
-- Validated settings, atomic replacement and backups of corrupted originals. No microphone capture starts automatically.
-- Official VB-CABLE installed and Windows restarted; physical and virtual endpoints enumerate. Rust, MSVC, Windows SDK, WebView2 and rustfmt are available.
+- Unified custom titlebar, native window controls, preset menu and settings sheet.
+- Persistent top filter library, horizontal left-to-right chain, fixed shared parameter inspector.
+- Pointer dragging starts at 6 px, uses a gentle lift and 180 ms drop, and previews neighboring displacement. A valid release commits once; Escape/outside release cancels without changing session/DSP.
+- Card bypass remains visible; more-menu holds duplicate/delete/previous/next. Clicking insertion positions and Alt+left/right (plus old up/down aliases) provide alternatives. Space/Enter remain ordinary button activation.
+- Local wheel-to-horizontal and edge auto-scroll, adjacent selection after deletion, empty inspector, reduced-motion support.
+- Existing five filters, compiled custom template, native audio commands, session schema, endpoint IDs and settings validation preserved. Selection/drag state is not persisted.
+- Version metadata is 0.2.0. Builds use no-bundle; delivery remains portable ZIP only.
 
-## Verification and current work
+## Verification
 
-- Five Rust library regressions passed, including recoverable CPAL errors, monitor failure isolation, output starvation recovery, waveform continuity during delayed-filter insertion, and template parameter changes.
-- Final combined checks passed: five Rust library tests, six DSP/persistence integration tests, the known-delay calibration self-check, two frontend model tests, TypeScript, frontend production build and debug/custom-protocol build. Hardware latency remains a separate failing acceptance check.
-- Browser UI tests passed including selected-position insertion, drag/reorder, keyboard movement, parameters, copy/delete, preset save/reload and desktop/narrow layout. Actual native WebView2 tests passed hardware start/stop/restart, monitoring and live filter changes. The latest executable also passed native UI start/stop/restart, monitoring, live edits and no uncaught JavaScript errors.
-- Thirty-minute diagnostic --smoke 1800 completed at 2026-10-09 01:22:57 Asia/Shanghai after 30.07 minutes. Evidence: research/audio-acceptance/artifacts/20261009-005253-soak.jsonl and soak-baseline.json (exact tested executable SHA-256). All 181 progress samples and the final record show running=true, no fatal error, underruns=2, overflows=0 and deviceXruns=2. Counts remained at startup values. The waiting wrapper could not retrieve ExitCode from a Get-Process object; completion was independently verified from all expected samples, the unique final record and empty stderr.
-- Source repairs after soak start added smooth delay transitions, useful template parameters, error isolation and an extra sinc priming block. The recorded soak binary precedes these repairs. Latest native UI and short --smoke 10 passed; two startup underruns remain, with no subsequent growth during that short run.
-- The user revised V1 acceptance to p95 ≤150 ms. Optimized Intel calibration at 5 ms buffer passed both scenarios: raw p95 137.81 ms and frequency-zero/gain p95 140.26 ms, 26/26 windows each, no app underruns/overflows. A prior 10 ms comparison failed with frequency-zero/gain at 156.46 ms. Cable-only p95 is 56.29 ms; its different time boundary prevents direct subtraction. Optimization follow-up is recorded in docs/audio-optimization.md.
-- The control panel initially reported not installed despite working audio. PnP had healthy ROOT\MEDIA\0000 and a duplicate ROOT\MEDIA\0001 with Code 10 / STATUS_DEVICE_BUSY, both signed driver 3.3.1.7. The installed and bundled panel hashes matched. Removed only the failed duplicate as administrator (exit 0), then restarted ROOT\MEDIA\0000 (exit 0). The user confirmed the panel now opens. Driver package and healthy instance were preserved.
-- The user confirmed current Latency=3072 samples. Read-only registry inspection confirms 3072 and Internal SR=48000 Hz. Full-path and cable-only tests were rerun. A full 30-minute soak has not been repeated with this setting.
-- A connected TANCHJIM-OLA II DSP became the default input but yielded an inconclusive near-silent correlation run. Test selection now uses the default physical input or an explicit MIC_TEST_INPUT_ID. Controlled measurements keep the previous Intel microphone without modifying system defaults.
-- Fixed 10 ms host output buffering did not reduce latency; a one-period app reserve introduced 19 debug and 16 optimized underruns. Both experiments were reverted. Keep the two-period reserve. New sessions default to the qualified 5 ms buffer; existing preferences are preserved.
-- Calibration now searches 300 ms and self-checks both 47 and 200 ms delays. Earlier search ranges clipped at 150 ms cannot support acceptance at that same threshold.
-- Final optimized portable binary SHA-256 is 2d18cf3df4b6ffb8c912c76f11ec4fe9f102f1e78ffbfdc2c8f888448714aaef. Isolated portable WebView2 UI verification passed at the qualified 5 ms buffer, with zero application underruns/overflows. The user explicitly requested skipping stability testing and delivering immediately. Stopped the test pipeline; progress through 580 seconds had zero underruns/overflows and one unchanged startup driver Xrun. The resulting stopped-stream assertion is an intentional cancellation. Do not claim a completed 30-minute soak for this build.
-- Computer Use node_repl initialization failed twice with windows sandbox setup-refresh errors. No direct PowerShell UI Automation fallback was used. The user is operating the vendor panel. Keep it open for them.
-## Delivery boundary
+- Rust: five library regressions, six DSP/settings integrations and known-delay calibration passed; two hardware tests are opt-in.
+- Frontend model tests, TypeScript and production build passed.
+- Browser checks use installed Edge with Playwright (Browser plugin unavailable), production preview at 127.0.0.1:1420, and screenshots outside the repo. Drag preview/commit/cancellation, middle insertion, buttons/menus/keyboard, presets/reload, wheel/edge scroll and reduced motion are checked. Layouts: 1100×760, 900×640 and 390×844.
+- Real portable WebView2 checks use matching Edge WebDriver over local HTTP. Native persistence, validation, actual microphone/CABLE routing, audio start/stop/restart, headphone monitoring, drag preview/drop during processing, bypass and maximize/restore/minimize were exercised. The test restores the isolated session, stops audio and closes its window.
+- Hardware regression at the qualified 5 ms buffer passed: raw p95 147.13 ms; frequency-zero/-6 dB gain p95 146.58 ms; 26/26 correlated windows each, zero app underruns/overflows and one startup driver Xrun. The first near-silent run was inconclusive and was repeated with user-provided microphone sound.
+- Full 30-minute stability testing remains explicitly waived. No claim of long-term stability for v0.2; see research/audio-acceptance/README.md for historical v0.1 evidence and current scope.
+- The public repository has no existing issue ticket for this milestone. Creating the tracking issue through the GitHub connector returned HTTP 403 (Resource not accessible by integration). The implementation behavior is documented in docs/design/ui-v0.2.md; publishing the ticket remains pending issue-write access.
 
-The prior packaging rejection was based on the former no-first-commit exception. The user has now explicitly authorized the initial commit, portable ZIP and push, and waived the full stability check. Build, regular checks, hardware latency and same-binary UI verification passed. VERSION is 0.1.0 for the initial delivery. Preserve the user's simplified AGENTS.md. The package manifest records the actual commit and the stability waiver; distribution scripts create no installer/tag/Release.
+## Delivery and resume
 
-## Resume commands
+Current AGENTS.md requires a local commit after applicable validation. On 2026-10-10, the owner authorized reorganizing unpublished commits and pushing first-party source. `research/` and the entire Tauri backend are now excluded from tracking while their local files are preserved. Published history remains unchanged; the complete previous local v0.2 commits are retained on `codex/backup-before-source-only-20261010`. A fresh GitHub checkout cannot build the Windows application without the locally retained backend. The previously delivered portable ZIP remains intact and still records its original tested commit. No new tag or GitHub Release is requested. Package.ps1 requires a clean committed source tree and acceptance matching the tested executable SHA-256.
 
-Dot-source scripts/Use-Toolchain.ps1 for the project-local Rust environment (research/build-environment/artifacts/cargo and rustup).
+Dot-source scripts/Use-Toolchain.ps1 for the existing project-local Rust toolchain. Build.ps1 runs normal checks and creates the optimized no-bundle executable. Stop owned test windows before rebuilding, since Windows locks running executable files. Test native UI from an isolated portable copy; its settings must not affect the user's application profile. Keep the working VB-CABLE driver/control panel intact (3072 samples, 48000 Hz).
 
-```powershell
-./scripts/Build.ps1 -ChecksOnly
-npm.cmd --prefix src/app run build
-cargo build --manifest-path src/app/src-tauri/Cargo.toml --features custom-protocol
-./src/app/src-tauri/target/debug/ismymicthatbad.exe --devices
-./src/app/src-tauri/target/debug/ismymicthatbad.exe --smoke 10
-cargo test --release --manifest-path src/app/src-tauri/Cargo.toml --test hardware_latency microphone_to_cable_p95_is_under_150ms -- --ignored --nocapture
-```
-
-Stop test app processes before rebuilding on Windows; running executables are locked. Vite ignores src-tauri/** to avoid watching locked Rust outputs. Native UI tests require a deliberately launched WebView2 debugging port 9222 and portable.marker in target/debug; they restore the saved session and stop audio afterward. Browser plugin is absent, so existing Playwright/Edge tests are used.
+The current no-WebSocket instruction is authoritative. Native UI automation uses HTTP WebDriver. The historical native-soak.mjs CDP harness requires explicit authorization before reuse. Screenshot/log directories and release binaries remain ignored; reference artwork is documentation only.

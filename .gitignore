@@ -1,8 +1,8 @@
 /release/*
 !/release/.gitkeep
-/research/**/artifacts/
+/research/
+**/tauri/
+**/src-tauri/
 **/node_modules/
 **/target/
 **/dist/
-/src/app/src-tauri/gen/
-/src/app/src-tauri/resources/THIRD-PARTY-NOTICES.txt

@@ -64,9 +64,9 @@ try {
 
 Commit: $commit
 
-Windows x64 portable voice changer: card-based chains, five filters, presets, a compiled custom filter template, VB-CABLE routing and optional monitoring.
+Windows x64 portable voice changer with a monochrome frosted-glass workspace, horizontal filter cards, a shared parameter inspector, presets and custom window controls. Pointer dragging previews changes and commits only on release; keyboard and menu alternatives are available. The existing five filters, compiled custom filter template, VB-CABLE routing and optional monitoring remain available.
 
-Validation: Rust DSP/settings regressions and calibration; frontend tests and TypeScript; optimized Windows build; real WebView2 persistence/routing/live edits; p95 <=150 ms hardware acceptance. See README.md and AUDIO-ACCEPTANCE.md inside the ZIP for measured results and limitations.
+Validation: Rust DSP/settings regressions and calibration; frontend tests and TypeScript; optimized Windows build; browser drag/cancel/keyboard/persistence/layout checks; real WebView2 persistence/routing/live edits and window controls; p95 <=150 ms hardware acceptance. The full stability test was waived by the user. See README.md and AUDIO-ACCEPTANCE.md inside the ZIP for measured results and limitations.
 
 No application installer, Git tag or GitHub Release is created.
 "@
