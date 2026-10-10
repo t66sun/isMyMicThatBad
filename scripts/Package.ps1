@@ -40,7 +40,7 @@ try {
         [System.IO.File]::WriteAllText("$staging/README.md",$guide,[System.Text.UTF8Encoding]::new($false))
         $hardware = [System.IO.File]::ReadAllText("$taskRoot/research/audio-acceptance/README.md").Replace('../../docs/audio-optimization.md','AUDIO-OPTIMIZATION.md')
         [System.IO.File]::WriteAllText("$staging/AUDIO-ACCEPTANCE.md",$hardware,[System.Text.UTF8Encoding]::new($false))
-        $optimization = [System.IO.File]::ReadAllText("$taskRoot/docs/audio-optimization.md").Replace('../research/audio-acceptance/README.md','AUDIO-ACCEPTANCE.md')
+        $optimization = [System.IO.File]::ReadAllText("$taskRoot/docs/audio-optimization.md").Replace('user-guide.md','README.md')
         [System.IO.File]::WriteAllText("$staging/AUDIO-OPTIMIZATION.md",$optimization,[System.Text.UTF8Encoding]::new($false))
         $portablePath = "$destination/isMyMicThatBad-$tag-portable-x64.zip"
         Compress-Archive -Path "$staging/*" -DestinationPath "$portablePath.tmp.zip" -Force

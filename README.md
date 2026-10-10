@@ -4,6 +4,17 @@ A Windows voice changer with a frosted-glass filter-card editor, configurable au
 
 Download the portable Windows x64 ZIP from [GitHub Releases](https://github.com/t66sun/isMyMicThatBad/releases). Usage and known audio limitations are in [the user guide](docs/user-guide.md).
 
+## Architecture
+
+The microphone feeds bounded WASAPI queues, an ordered mono DSP chain and CABLE Input; other applications capture CABLE Output. Optional headphone monitoring adapts its clock independently. Processing uses 48 kHz, 256-frame blocks.
+
+- React owns the session and filter-card editor. Drag previews and selection are temporary; a valid drop commits the chain through validated native commands.
+- `src/app/src/filters.json` is the shared catalog and parameter contract. Rust validates it before constructing processors in `dsp.rs` and `effects.rs`.
+- `audio.rs` owns streams, preallocated queues and the worker; `clock.rs` handles resampling. `graph.rs` preserves processor state and crossfades live changes. Audio callbacks use preallocated processing buffers.
+- `settings.rs` persists configuration and preserves corrupted originals. `main.rs` owns window/tray behavior and the shared audio controller. Loading settings never starts capture.
+
+See [filter development](docs/filter-development.md) for the compiled extension point and [audio optimization](docs/audio-optimization.md) for deferred latency work. Track implementation tasks and release history in GitHub Issues and Releases.
+
 ## Source and build
 
 `src/app/src` contains the React editor; `src/native` contains our Rust audio engine, window/tray behavior and native build configuration. `scripts/Initialize-Native.ps1` copies this source into the ignored `src/app/src-tauri` workspace. Edit `src/native`, not the generated copy. Research checkouts, dependency sources, vendor driver/runtime files and build output are excluded from Git.
