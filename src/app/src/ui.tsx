@@ -107,7 +107,7 @@ export function Menu({ label, children, content, className = '', width = 220, di
   </>;
 }
 
-export function WindowControls({ onError }: { onError: (error: string) => void }) {
+export function WindowControls({ onError, beforeClose, closeBusy }: { onError: (error: string) => void; beforeClose: () => Promise<void>; closeBusy: boolean }) {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
     if (!native) return;
@@ -120,13 +120,13 @@ export function WindowControls({ onError }: { onError: (error: string) => void }
     return () => { active = false; unlisten?.(); };
   }, [onError]);
   const act = (action: 'minimize' | 'toggleMaximize' | 'close') => {
-    if (native) getCurrentWindow()[action]().catch(error => onError(String(error)));
+    if (native) (action === 'close' ? beforeClose().then(() => getCurrentWindow().close()) : getCurrentWindow()[action]()).catch(error => onError(String(error)));
   };
   return <div className="window-controls">
     <button aria-label="最小化窗口" disabled={!native} onClick={() => act('minimize')}><Minus size={16} aria-hidden="true" /></button>
     <button aria-label={maximized ? '还原窗口' : '最大化窗口'} disabled={!native} onClick={() => act('toggleMaximize')}>
       {maximized ? <Copy size={14} aria-hidden="true" /> : <Square size={14} aria-hidden="true" />}
     </button>
-    <button className="window-close" aria-label="关闭窗口" disabled={!native} onClick={() => act('close')}><X size={17} aria-hidden="true" /></button>
+    <button className="window-close" aria-label="关闭窗口" disabled={!native || closeBusy} onClick={() => act('close')}><X size={17} aria-hidden="true" /></button>
   </div>;
 }

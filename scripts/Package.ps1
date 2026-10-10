@@ -5,7 +5,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Commit validated source before packaging' }
     git diff --quiet HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Source differs from recorded commit' }
-    if (git ls-files --others --exclude-standard) { throw 'Uncommitted source remains' }
+    if (git ls-files --others --exclude-standard -- ':!.codegraph/**') { throw 'Uncommitted source remains' }
     $version = (git show HEAD:VERSION).Trim()
     if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') { throw 'Committed VERSION must contain SemVer' }
     $tag = "v$version"
@@ -59,7 +59,7 @@ try {
                 if ($hash -ne $acceptance.binary_sha256) { throw 'ZIP executable differs from tested binary' }
             } finally { $entryStream.Dispose(); $sha.Dispose() }
         } finally { $archive.Dispose() }
-        $sourceRecords = foreach ($path in git ls-files -- .gitignore .gitattributes AGENTS.md VERSION src scripts tests docs research) {
+        $sourceRecords = foreach ($path in git ls-files -- .gitignore .gitattributes AGENTS.md README.md VERSION codegraph.json src scripts tests docs) {
             "$((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant())  $path"
         }
         [System.IO.File]::WriteAllLines("$destination/SOURCE-SHA256.txt",$sourceRecords,[System.Text.UTF8Encoding]::new($false))
@@ -75,11 +75,11 @@ try {
 
 Commit: $commit
 
-Windows x64 portable voice changer with 11 filters and 7 presets. Adds a noise gate, formant shift, three-band EQ, compressor, pitch shift and reverb; distortion gains adjustable clipping. Four new presets: female voice, blown microphone, broadcast and ethereal. The horizontal library exposes every card and the inspector exposes all parameters. Legacy distortion settings upgrade with an original-file backup. Adjacent pitch/formant cards share analysis while retaining independent controls.
+Windows x64 portable voice changer with 11 filters and 7 presets. Gray-white frosted-glass application and tray icons match the audio workspace. Optional close-to-tray keeps audio processing active; click the tray icon or choose Show Window to return. The tray processing checkbox starts/stops the same audio controller as the window; failures restore the window with an explanation. Choose Exit to stop processing and quit. Old settings default to normal window-close behavior. First-party native source is maintained in src/native; build scripts generate the ignored local Tauri workspace.
 
-Validation: Rust DSP/settings regressions and waveform/envelope calibration; frontend tests and TypeScript; optimized Windows build; browser card/parameter/preset/drag/layout checks; real WebView2 persistence/routing/live edits and window controls. Hardware targets: legacy calibration chains p95 <=150 ms, four new presets p95 <=200 ms. The full stability test was waived by the user. See README.md and AUDIO-ACCEPTANCE.md inside the ZIP for measured results and limitations.
+Validation: Rust DSP/settings regressions; frontend tests and TypeScript; optimized Windows build; real WebView2 settings persistence and tray lifecycle checks. The DSP implementation is unchanged from v0.3.0; its hardware measurements are inherited, not remeasured for v0.3.2. The accepted female-preset underrun and untested long-term stability remain known limitations. See README.md and AUDIO-ACCEPTANCE.md inside the ZIP.
 
-No application installer, Git tag or GitHub Release is created.
+Portable ZIP only. This packaging script does not publish; the validated package is uploaded separately to the authorized GitHub Release.
 "@
         [System.IO.File]::WriteAllText("$destination/CHANGELOG.md",$changelog,[System.Text.UTF8Encoding]::new($false))
         $record.files = @(foreach ($path in $portablePath,"$destination/CHANGELOG.md","$destination/SOURCE-SHA256.txt","$destination/LOCAL-NATIVE-SHA256.txt") {

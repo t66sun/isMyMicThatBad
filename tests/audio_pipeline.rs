@@ -146,11 +146,25 @@ fn settings_roundtrip_and_corruption_preserve_user_data() {
     let directory = std::env::temp_dir().join(format!("mic-settings-test-{nonce}"));
     let store = Store::new(directory.clone());
     let session = Session {
+        close_to_tray: true,
         chain: vec![config("gain", &[("gain_db", -6.0)])],
         ..Session::default()
     };
     store.save(&session).unwrap();
     assert_eq!(store.load().unwrap().session.chain, session.chain);
+    assert!(store.load().unwrap().session.close_to_tray);
+    let mut legacy = serde_json::to_value(&session).unwrap();
+    legacy.as_object_mut().unwrap().remove("closeToTray");
+    let restored: Session = serde_json::from_value(legacy.clone()).unwrap();
+    assert!(!restored.close_to_tray);
+    for value in [
+        serde_json::json!(null),
+        serde_json::json!(1),
+        serde_json::json!("true"),
+    ] {
+        legacy["closeToTray"] = value;
+        assert!(serde_json::from_value::<Session>(legacy.clone()).is_err());
+    }
     std::fs::write(directory.join("settings.json"), "broken original data").unwrap();
     let loaded = store.load().unwrap();
     assert!(loaded.warning.is_some());

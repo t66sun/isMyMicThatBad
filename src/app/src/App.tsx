@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, Play, Square, Settings, ChevronDown, X, RefreshCw, Save, CheckCircle2, AlertCircle, Cable, Trash2, Plus } from 'lucide-react';
+import { Play, Square, Settings, ChevronDown, X, RefreshCw, Save, CheckCircle2, AlertCircle, Cable, Trash2, Plus } from 'lucide-react';
 import * as api from './api';
 import { definitions, builtins, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, cloneChain, type Session, type FilterInstance, type FilterDefinition } from './model';
 import { ChainEditor, type CardAction } from './ChainEditor';
 import { FilterIcon, Menu, ParameterControl, WindowControls } from './ui';
+import appIcon from './assets/app-icon.svg';
+import { listen } from '@tauri-apps/api/event';
 import { version } from '../package.json';
 
 function Meter({ label, value }: { label: string; value: number }) {
@@ -28,6 +30,12 @@ export default function App() {
   const presetDialog = useRef<HTMLDialogElement>(null);
   const selected = session.chain.find(node => node.id === selectedId) ?? session.chain[0] ?? null;
   const definition = selected ? definitions.find(d => d.type === selected.type)! : null;
+
+  useEffect(() => {
+    if (!api.native) return;
+    const listener = listen<string>('tray-error', event => setError(event.payload));
+    return () => { listener.then(unlisten => unlisten()).catch(() => {}); };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -150,7 +158,7 @@ export default function App() {
 
   return <div className="app-shell">
     <header className="titlebar glass">
-      <div className="titlebar-grab" data-tauri-drag-region><AudioLines size={25} strokeWidth={1.7} aria-hidden="true" /><h1>isMyMicThatBad</h1></div>
+      <div className="titlebar-grab" data-tauri-drag-region><img src={appIcon} width={29} height={29} alt="" /><h1>isMyMicThatBad</h1></div>
       <Menu label="声音预设" content={<><span>{presetLabel}</span><ChevronDown size={14} aria-hidden="true" /></>} className="preset-trigger" width={248} disabled={dragging}>
         <span className="menu-heading">声音预设</span>
         {builtins.map(p => <button key={p.id} role="menuitem" onClick={() => applyPreset(p.chain)}>{p.name}<small>{p.chain.length === 0 ? '直接输出' : p.chain.length + ' 个滤镜'}</small></button>)}
@@ -167,7 +175,7 @@ export default function App() {
         {busy ? '请稍候' : status.running ? '停止处理' : '开始处理'}
       </button>
       <button className="settings-button icon-button" aria-label="打开设置" title="设备、监听与缓冲" disabled={dragging} onClick={() => settings.current?.showModal()}><Settings size={21} strokeWidth={1.7} aria-hidden="true" /></button>
-      <WindowControls onError={setError} />
+      <WindowControls onError={setError} beforeClose={() => ready ? api.save(session) : Promise.resolve()} closeBusy={busy} />
     </header>
     {!api.native ? <div className="preview-notice"><span>编辑器预览</span>真实音频请使用桌面应用</div> : null}
     {error || status.error ? <div role="alert" className="message-banner error-banner"><AlertCircle size={17} aria-hidden="true" /><span>{error || status.error}</span>
@@ -208,6 +216,14 @@ export default function App() {
         <label className="buffer-control">缓冲目标 <span>{session.bufferMs} ms</span><input aria-label="缓冲目标" disabled={status.running} type="range" min={5} max={30} step={1} value={session.bufferMs} onChange={event => setSession(previous => ({ ...previous, bufferMs: Number(event.target.value) }))} /></label>
         <p className="hint">发生断音时提高缓冲。端到端延迟以回环测量为准。</p>
         <Meter label="输入电平" value={status.inputPeak} /><Meter label="输出电平" value={status.outputPeak} />
+      </section>
+      <section className="settings-section"><h3>窗口</h3>
+        <label className="monitor-switch"><span>关闭窗口后进入托盘</span><input type="checkbox" checked={session.closeToTray} disabled={!api.native || busy || !ready} onChange={async event => {
+          const next = { ...session, closeToTray: event.target.checked };
+          setBusy(true);
+          try { await api.save(next); setSession(previous => ({ ...previous, closeToTray: next.closeToTray })); } catch (error) { setError('保存失败：' + String(error)); } finally { setBusy(false); }
+        }} /></label>
+        <p className="hint">开启后关闭窗口仍会处理音频。点击托盘图标恢复窗口；右键选择“退出”停止处理并退出。</p>
       </section>
       {session.presets.length ? <section className="settings-section"><h3>我的预设</h3>{session.presets.map(p => <div className="saved-preset" key={p.id}><span>{p.name}</span><button className="icon-button" aria-label={'删除预设' + p.name} onClick={() => setSession(previous => ({ ...previous, presets: previous.presets.filter(item => item.id !== p.id) }))}><Trash2 size={16} aria-hidden="true" /></button></div>)}</section> : null}
       {api.native && !cablePresent ? <section className="settings-section"><h3><Cable size={17} aria-hidden="true" />连接到其他应用</h3><p className="hint">尚未检测到 VB-CABLE。完成安装后重启 Windows。</p>

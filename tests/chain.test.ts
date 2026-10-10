@@ -49,3 +49,10 @@ test('saved configuration rejects invalid filter values and recovers valid prese
   assert.throws(() => validateSession({...session, chain: [{id:'x',type:'frequency',enabled:true,params:{shift_hz:Infinity}}]}));
   assert.throws(() => validateSession({...session, chain: [{id:'x',type:'unknown',enabled:true,params:{}}]}));
 });
+
+test('close-to-tray defaults off for legacy settings and validates persisted choices', () => {
+  const {closeToTray, ...legacy} = emptySession;
+  assert.equal(validateSession(legacy).closeToTray, false);
+  for (const enabled of [false, true]) assert.equal(validateSession({...legacy, closeToTray:enabled}).closeToTray, enabled);
+  for (const value of [null, 'true', 1]) assert.throws(() => validateSession({...legacy, closeToTray:value}));
+});

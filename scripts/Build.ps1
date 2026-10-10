@@ -1,5 +1,6 @@
 param([switch]$ChecksOnly)
 . "$PSScriptRoot/Use-Toolchain.ps1"
+& "$PSScriptRoot/Initialize-Native.ps1"
 Push-Location $taskRoot
 try {
     if (-not (Test-Path -LiteralPath 'src/app/node_modules')) {

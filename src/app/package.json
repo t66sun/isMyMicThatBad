@@ -1,15 +1,17 @@
 {
   "name": "ismymicthatbad",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "tauri": "tauri",
+    "predesktop": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/Initialize-Native.ps1",
     "desktop": "tauri dev",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test ../../tests/chain.test.ts",
     "build": "tsc --noEmit && vite build",
+    "prebuild:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/Initialize-Native.ps1",
     "build:win": "tauri build --no-bundle"
   },
   "dependencies": {
