@@ -25,4 +25,5 @@ Use a single-context layout. Read `docs/agents/domain.md` before exploring domai
 - Commit messages must detail the affected files/components and concrete changes; create local documentation only when essential, such as README.md or AGENTS.md.
 - Pushes and tags require explicit authorization; existing authorization remains valid within its scope. A push alone does not create a tag. Authorization to publish to GitHub covers the required push, tag, and Release operations.
 - Report and stop on remote or tag conflicts. Do not force-push, overwrite, or delete published tags.
+- Read and maintain `TODO.md` during project work, mark items complete only after verification, adjust affected items when implementation is blocked or results miss expectations, and when all items are complete, clear the entire file and remind the user to request a rewrite.
 <!-- project-governance:end -->
