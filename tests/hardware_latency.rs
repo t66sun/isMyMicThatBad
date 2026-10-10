@@ -1,5 +1,9 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use mic_engine::{audio::Controller, dsp::FilterConfig, settings::Session};
+use mic_engine::{
+    audio::Controller,
+    dsp::{Chain, FilterConfig, BLOCK},
+    settings::Session,
+};
 use rtrb::{Consumer, RingBuffer};
 use std::{
     sync::{Arc, Mutex},
@@ -69,19 +73,24 @@ fn reduce(mut source: Consumer<Frame>) -> Vec<Frame> {
     result
 }
 
-fn correlate(reference: &[Frame], cable: &[Frame]) -> Vec<(f64, f64)> {
+fn correlate_at_rate(
+    reference: &[Frame],
+    cable: &[Frame],
+    rate: usize,
+    minimum_rms: f64,
+) -> Vec<(f64, f64)> {
     let mut results = Vec::new();
-    for window in reference.windows(512).step_by(2400).skip(5) {
+    for window in reference.windows(512).step_by(rate * 2 / 5).skip(5) {
         let mean = window.iter().map(|x| x.value as f64).sum::<f64>() / 512.0;
         let x: Vec<_> = window.iter().map(|x| x.value as f64 - mean).collect();
         let energy = x.iter().map(|x| x * x).sum::<f64>();
-        if energy < 1e-16 {
+        if energy < 1e-16 || energy / 512.0 + mean * mean < minimum_rms * minimum_rms {
             continue;
         }
         let origin = cable.partition_point(|x| x.time < window[0].time);
         let mut best = (0.0, 0.0);
         // Search beyond the acceptance limit so slower routes cannot pass by clipping.
-        for offset in 0..1800 {
+        for offset in 0..rate * 3 / 10 {
             let begin = origin + offset;
             if begin + 512 >= cable.len() {
                 break;
@@ -103,6 +112,160 @@ fn correlate(reference: &[Frame], cable: &[Frame]) -> Vec<(f64, f64)> {
         results.push(best);
     }
     results
+}
+
+fn correlate(reference: &[Frame], cable: &[Frame]) -> Vec<(f64, f64)> {
+    correlate_at_rate(reference, cable, 6000, 0.0)
+}
+fn envelope(mut source: Consumer<Frame>) -> Vec<Frame> {
+    let mut result = Vec::new();
+    while source.slots() >= 96 {
+        let first = source.pop().unwrap();
+        let mut power = (first.value as f64).powi(2);
+        for _ in 1..96 {
+            power += (source.pop().unwrap().value as f64).powi(2);
+        }
+        result.push(Frame {
+            time: first.time,
+            value: (power / 96.0).sqrt() as f32,
+        });
+    }
+    result
+}
+
+fn processed_reference(mut source: Consumer<Frame>, filters: &[FilterConfig]) -> Consumer<Frame> {
+    let mut chain = Chain::new(filters).unwrap();
+    let delay = chain.latency as f64 / 48000.0;
+    let (mut producer, consumer) = RingBuffer::new(source.slots() + 1);
+    let mut input = [0.0; BLOCK];
+    let mut output = [0.0; BLOCK];
+    let mut times = [0.0; BLOCK];
+    while source.slots() > 0 {
+        let count = source.slots().min(BLOCK);
+        for i in 0..count {
+            let frame = source.pop().unwrap();
+            input[i] = frame.value;
+            times[i] = frame.time;
+        }
+        chain.process(&input[..count], &mut output[..count]);
+        for i in 0..count {
+            // Attribute predicted output to its source time, retaining algorithmic delay in the measurement.
+            assert!(producer
+                .push(Frame {
+                    time: times[i] - delay,
+                    value: output[i]
+                })
+                .is_ok());
+        }
+    }
+    consumer
+}
+
+#[test]
+fn processed_reference_retains_algorithmic_and_hardware_delay() {
+    fn queue(frames: &[Frame]) -> Consumer<Frame> {
+        let (mut producer, consumer) = RingBuffer::new(frames.len() + 1);
+        for frame in frames {
+            assert!(producer.push(*frame).is_ok());
+        }
+        consumer
+    }
+    let catalog: serde_json::Value =
+        serde_json::from_str(include_str!("../src/app/src/filters.json")).unwrap();
+    let filters: Vec<_> = [("pitch", 5.0), ("formant", 2.5)]
+        .into_iter()
+        .map(|(kind, shift)| {
+            let definition = catalog
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["type"] == kind)
+                .unwrap();
+            let mut params: std::collections::BTreeMap<String, f32> = definition["parameters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| {
+                    (
+                        p["key"].as_str().unwrap().into(),
+                        p["default"].as_f64().unwrap() as f32,
+                    )
+                })
+                .collect();
+            params.insert("semitones".into(), shift);
+            FilterConfig {
+                id: kind.into(),
+                kind: kind.into(),
+                enabled: true,
+                params,
+            }
+        })
+        .collect();
+    let mut seed = 17_u32;
+    let mut level = 0.1;
+    let input: Vec<_> = (0..48000 * 6)
+        .map(|i| {
+            if i % 7200 == 0 {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                level = 0.03 + 0.15 * seed as f32 / u32::MAX as f32;
+            }
+            let phase = std::f32::consts::TAU * 120.0 * i as f32 / 48000.0;
+            Frame {
+                time: i as f64 / 48000.0,
+                value: level
+                    * (phase.sin() + 0.5 * (6.0 * phase).sin() + 0.25 * (11.0 * phase).sin()),
+            }
+        })
+        .collect();
+    let mut chain = Chain::new(&filters).unwrap();
+    let mut processed = Vec::new();
+    for frames in input.chunks(BLOCK) {
+        let x: Vec<_> = frames.iter().map(|f| f.value).collect();
+        let mut y = vec![0.0; x.len()];
+        chain.process(&x, &mut y);
+        processed.extend(frames.iter().zip(y).map(|(f, value)| Frame {
+            time: f.time,
+            value,
+        }));
+    }
+    let predicted = envelope(processed_reference(queue(&input), &filters));
+    for hardware_ms in [47.0, 200.0, 250.0] {
+        let received: Vec<_> = processed
+            .iter()
+            .map(|f| Frame {
+                time: f.time + hardware_ms / 1000.0,
+                value: f.value,
+            })
+            .collect();
+        let results = correlate_at_rate(
+            &predicted,
+            &envelope(queue(&received)),
+            500,
+            10.0_f64.powf(-50.0 / 20.0),
+        );
+        let expected = hardware_ms + chain.latency as f64 / 48.0;
+        assert!(results.len() >= 5);
+        assert!(
+            results
+                .iter()
+                .all(|(delay, score)| (*delay - expected).abs() <= 2.0 && *score > 0.95),
+            "{results:?}, expected {expected}"
+        );
+        if hardware_ms == 47.0 {
+            let direct = correlate_at_rate(
+                &envelope(queue(&input)),
+                &envelope(queue(&received)),
+                500,
+                10.0_f64.powf(-50.0 / 20.0),
+            );
+            assert!(
+                direct
+                    .iter()
+                    .all(|(delay, _)| (*delay - expected).abs() <= 8.0),
+                "declared delay must agree with the amplitude-envelope response: {direct:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -306,4 +469,145 @@ fn measure_cable_without_microphone_or_dsp() {
         "Cable-only p95: {:.2} ms",
         good[(good.len() * 95).div_ceil(100) - 1]
     );
+}
+
+#[test]
+fn envelope_calibration_survives_carrier_and_gain_changes() {
+    let mut seed = 17_u32;
+    let amplitudes: Vec<_> = (0..2500)
+        .map(|i| {
+            if i % 47 == 0 {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            }
+            0.03 + 0.2 * (seed as f64 / u32::MAX as f64)
+        })
+        .collect();
+    fn samples(amplitudes: &[f64], carrier: f64, delay: f64, compressed: bool) -> Consumer<Frame> {
+        let (mut producer, consumer) = RingBuffer::new(amplitudes.len() * 96 + 1);
+        for (i, amplitude) in amplitudes.iter().enumerate() {
+            for j in 0..96 {
+                let time = (i * 96 + j) as f64 / 48000.0;
+                let level = if compressed {
+                    amplitude.sqrt() * 0.1
+                } else {
+                    *amplitude
+                };
+                assert!(producer
+                    .push(Frame {
+                        time: time + delay,
+                        value: (level * (std::f64::consts::TAU * carrier * time).sin()) as f32
+                    })
+                    .is_ok());
+            }
+        }
+        consumer
+    }
+    // Gates remove quiet background; these windows cannot measure speech latency.
+    let quiet = envelope(samples(&vec![0.0001; 2500], 1000.0, 0.0, false));
+    let silent = envelope(samples(&vec![0.0; 2500], 1500.0, 0.2, true));
+    assert!(correlate_at_rate(&quiet, &silent, 500, 10.0_f64.powf(-50.0 / 20.0)).is_empty());
+    let reference = envelope(samples(&amplitudes, 1000.0, 0.0, false));
+    for expected_ms in [47.0, 200.0, 250.0] {
+        let output = envelope(samples(&amplitudes, 1500.0, expected_ms / 1000.0, true));
+        let result = correlate_at_rate(&reference, &output, 500, 10.0_f64.powf(-50.0 / 20.0));
+        assert!(result.len() >= 5);
+        assert!(result
+            .iter()
+            .all(|(delay, score)| (delay - expected_ms).abs() <= 2.0 && *score > 0.95));
+    }
+}
+
+#[test]
+#[ignore = "requires audible microphone input and VB-CABLE for four new presets"]
+fn new_presets_microphone_to_cable_p95_is_under_200ms() {
+    let host = cpal::default_host();
+    let id = std::env::var("MIC_TEST_INPUT_ID").expect("Select the physical microphone explicitly");
+    let physical = host
+        .input_devices()
+        .unwrap()
+        .find(|d| d.id().unwrap().to_string() == id)
+        .expect("selected microphone");
+    let cable = host
+        .input_devices()
+        .unwrap()
+        .find(|d| d.description().unwrap().name().contains("CABLE Output"))
+        .unwrap();
+    let output = host
+        .output_devices()
+        .unwrap()
+        .find(|d| d.description().unwrap().name().contains("CABLE Input"))
+        .unwrap();
+    #[derive(serde::Deserialize)]
+    struct Preset {
+        name: String,
+        chain: Vec<FilterConfig>,
+    }
+    let file = std::env::var("MIC_TEST_PRESETS_FILE")
+        .expect("Export shared presets with tests/export-presets.ts");
+    let presets: Vec<Preset> =
+        serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+    assert_eq!(presets.len(), 4);
+    let mut failures = Vec::new();
+    for preset in presets {
+        let filters = preset.chain.clone();
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let (reference_stream, reference) = record(&physical, Arc::clone(&errors));
+        let (cable_stream, received) = record(&cable, Arc::clone(&errors));
+        reference_stream.play().unwrap();
+        cable_stream.play().unwrap();
+        let mut controller = Controller::default();
+        controller
+            .start(&Session {
+                input_id: id.clone(),
+                output_id: output.id().unwrap().to_string(),
+                buffer_ms: 5,
+                chain: preset.chain,
+                ..Session::default()
+            })
+            .unwrap();
+        std::thread::sleep(Duration::from_secs(2));
+        let startup = controller.status();
+        std::thread::sleep(Duration::from_secs(12));
+        let status = controller.status();
+        controller.stop();
+        drop(reference_stream);
+        drop(cable_stream);
+        assert!(errors.lock().unwrap().is_empty());
+        assert!(status.running && status.error.is_none());
+        let results = correlate_at_rate(
+            &envelope(processed_reference(reference, &filters)),
+            &envelope(received),
+            500,
+            10.0_f64.powf(-50.0 / 20.0),
+        );
+        let mut good: Vec<_> = results
+            .iter()
+            .filter(|(_, score)| *score >= 0.5)
+            .map(|(delay, _)| *delay)
+            .collect();
+        good.sort_by(f64::total_cmp);
+        println!(
+            "{}",
+            serde_json::json!({"scenario":preset.name,"method":"WASAPI timestamps; same-preset reference DSP with source timestamps minus declared algorithmic delay; 2 ms RMS correlation, reference >= -50 dB, search 0..300 ms; in-memory audio","windows":results.len(),"correlated_windows":good.len(),"delays_and_scores":results,"startup":startup,"status":status})
+        );
+        if good.len() < 20 || good.len() * 5 < results.len() * 4 {
+            failures.push(format!(
+                "{}: insufficient matched speech windows ({}/{})",
+                preset.name,
+                good.len(),
+                results.len()
+            ));
+            continue;
+        }
+        let p95 = good[(good.len() * 95).div_ceil(100) - 1];
+        println!("{} p95: {p95:.2} ms", preset.name);
+        // shortcut: v0.3 records acknowledged underruns, enforce no growth during the stability milestone.
+        if p95 > 200.0 || status.overflows != 0 {
+            failures.push(format!(
+                "{}: p95 {p95:.2} ms, underruns {} -> {}, overflows {}",
+                preset.name, startup.underruns, status.underruns, status.overflows
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("; "));
 }

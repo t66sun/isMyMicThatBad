@@ -75,10 +75,26 @@ export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSele
   const [insertAt, setInsertAt] = useState<number | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const track = useRef<HTMLDivElement>(null);
+  const libraryViewport = useRef<HTMLDivElement>(null);
+  const [libraryEdges, setLibraryEdges] = useState({ previous: false, next: false });
   const frame = useRef<number | null>(null);
   const pending = useRef<DragMoveEvent['operation'] | null>(null);
   const suppressClick = useRef(false);
   const { ref: dropRef, isDropTarget } = useDroppable({ id: 'chain-surface', accept: ['library', 'chain-card'] });
+  useEffect(() => {
+    const element = libraryViewport.current;
+    if (!element) return;
+    const update = () => {
+      const previous = element.scrollLeft > 1;
+      const next = element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
+      setLibraryEdges(current => current.previous === previous && current.next === next ? current : { previous, next });
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    element.addEventListener('scroll', update, { passive: true });
+    update();
+    return () => { observer.disconnect(); element.removeEventListener('scroll', update); };
+  }, []);
   useEffect(() => {
     const element = viewport.current;
     if (!element) return;
@@ -96,6 +112,10 @@ export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSele
     if (selectedId && !dragRef.current) document.getElementById('select-' + selectedId)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduced ? 'instant' : 'smooth' });
   }, [selectedId, reduced]);
   useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); }, []);
+  const scrollLibrary = (direction: number) => {
+    const element = libraryViewport.current;
+    if (element) element.scrollBy({ left: direction * element.clientWidth * .75, behavior: reduced ? 'instant' : 'smooth' });
+  };
   const inside = (operation: DragMoveEvent['operation']) => {
     const rect = viewport.current?.getBoundingClientRect();
     const point = operation.position.current;
@@ -177,8 +197,15 @@ export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSele
       setTimeout(() => { suppressClick.current = false; }, 0);
     }}>
     <section className="library-panel" aria-label="滤镜库">
-      <div className="section-heading"><h2>滤镜库</h2><span>{insertAt === null ? '' : '加入位置 ' + (insertAt + 1)}</span></div>
-      <div className="library-list">{definitions.map(definition => <LibraryItem key={definition.type} definition={definition} disabled={chain.length >= 64}
+      <div className="section-heading"><h2>滤镜库</h2><span>{insertAt === null ? '' : '加入位置 ' + (insertAt + 1)}</span>
+        <div className="library-controls">
+          <button className="icon-button" aria-label="向前浏览滤镜库" aria-controls="filter-library" disabled={!libraryEdges.previous || Boolean(drag)}
+            onClick={() => scrollLibrary(-1)}><ArrowLeft size={17} aria-hidden="true" /></button>
+          <button className="icon-button" aria-label="向后浏览滤镜库" aria-controls="filter-library" disabled={!libraryEdges.next || Boolean(drag)}
+            onClick={() => scrollLibrary(1)}><ArrowRight size={17} aria-hidden="true" /></button>
+        </div>
+      </div>
+      <div ref={libraryViewport} id="filter-library" className="library-list" role="group" aria-label="全部滤镜">{definitions.map(definition => <LibraryItem key={definition.type} definition={definition} disabled={chain.length >= 64}
         onAdd={() => { if (suppressClick.current || dragRef.current) return; onAdd(definition, insertAt ?? chain.length); setInsertAt(null); }} />)}</div>
     </section>
     <section className="chain-panel" aria-label="滤镜管线">

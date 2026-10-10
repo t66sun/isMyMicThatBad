@@ -9,7 +9,10 @@ export async function load(): Promise<{session:Session; warning:string|null}> {
   try { const saved = localStorage.getItem('mic-preview'); return {session:saved ? validateSession(JSON.parse(saved)) : {...emptySession},warning:null}; }
   catch { return {session:{...emptySession},warning:'预览配置无效，已恢复默认。'}; }
 }
-export async function save(session: Session) { validateSession(session); if (native) await invoke('save_session',{session}); else localStorage.setItem('mic-preview',JSON.stringify(session)); }
+export async function save(session: Session) {
+  const normalized = validateSession(session);
+  if (native) await invoke('save_session',{session:normalized}); else localStorage.setItem('mic-preview',JSON.stringify(normalized));
+}
 export async function devices(): Promise<Device[]> { return native ? invoke('list_devices') : []; }
 export async function chain(filters: FilterInstance[]) { if (native) await invoke('set_chain',{filters}); }
 export async function start(session: Session) { if (!native) throw new Error('浏览器只提供编辑器预览；真实音频请打开桌面应用。'); await invoke('start_audio',{settings:session}); }

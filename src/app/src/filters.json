@@ -70,7 +70,7 @@
   {
     "type": "distortion",
     "name": "失真",
-    "description": "柔和饱和，让声音更有颗粒感。",
+    "description": "混合柔和饱和与硬削波，塑造颗粒和破音。",
     "color": "#e69f9c",
     "parameters": [
       {
@@ -90,6 +90,278 @@
         "max": 100,
         "step": 1,
         "default": 25
+      },
+      {
+        "key": "clip",
+        "label": "削波",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "default": 0
+      }
+    ],
+    "summaryKeys": [
+      "drive_db",
+      "clip"
+    ]
+  },
+  {
+    "type": "gate",
+    "name": "噪声门",
+    "description": "低于门限时平滑关闭，减少停顿间的底噪。",
+    "color": "#8e99a7",
+    "summaryKeys": [
+      "threshold_db",
+      "release_ms"
+    ],
+    "parameters": [
+      {
+        "key": "threshold_db",
+        "label": "阈值",
+        "unit": "dB",
+        "min": -80,
+        "max": 0,
+        "step": 0.5,
+        "default": -45
+      },
+      {
+        "key": "attack_ms",
+        "label": "攻击",
+        "unit": "ms",
+        "min": 1,
+        "max": 20,
+        "step": 1,
+        "default": 3
+      },
+      {
+        "key": "hold_ms",
+        "label": "保持",
+        "unit": "ms",
+        "min": 0,
+        "max": 200,
+        "step": 1,
+        "default": 60
+      },
+      {
+        "key": "release_ms",
+        "label": "释放",
+        "unit": "ms",
+        "min": 10,
+        "max": 500,
+        "step": 1,
+        "default": 120
+      }
+    ]
+  },
+  {
+    "type": "formant",
+    "name": "共振峰移位",
+    "description": "调整共振特征，保持音高与说话速度。",
+    "color": "#8e99a7",
+    "summaryKeys": [
+      "semitones"
+    ],
+    "parameters": [
+      {
+        "key": "semitones",
+        "label": "移位",
+        "unit": "半音",
+        "min": -6,
+        "max": 6,
+        "step": 0.1,
+        "default": 0
+      }
+    ]
+  },
+  {
+    "type": "eq",
+    "name": "均衡器",
+    "description": "分别塑造低频、中频和高频，中频宽度可调。",
+    "color": "#8e99a7",
+    "summaryKeys": [
+      "low_gain_db",
+      "high_gain_db"
+    ],
+    "parameters": [
+      {
+        "key": "low_gain_db",
+        "label": "低频增益",
+        "unit": "dB",
+        "min": -12,
+        "max": 12,
+        "step": 0.5,
+        "default": 0
+      },
+      {
+        "key": "low_freq",
+        "label": "低频频率",
+        "unit": "Hz",
+        "min": 40,
+        "max": 800,
+        "step": 1,
+        "default": 180
+      },
+      {
+        "key": "mid_gain_db",
+        "label": "中频增益",
+        "unit": "dB",
+        "min": -12,
+        "max": 12,
+        "step": 0.5,
+        "default": 0
+      },
+      {
+        "key": "mid_freq",
+        "label": "中频频率",
+        "unit": "Hz",
+        "min": 200,
+        "max": 5000,
+        "step": 1,
+        "default": 1200
+      },
+      {
+        "key": "mid_q",
+        "label": "中频宽度 Q",
+        "unit": "",
+        "min": 0.3,
+        "max": 4,
+        "step": 0.1,
+        "default": 1
+      },
+      {
+        "key": "high_gain_db",
+        "label": "高频增益",
+        "unit": "dB",
+        "min": -12,
+        "max": 12,
+        "step": 0.5,
+        "default": 0
+      },
+      {
+        "key": "high_freq",
+        "label": "高频频率",
+        "unit": "Hz",
+        "min": 1000,
+        "max": 12000,
+        "step": 1,
+        "default": 6000
+      }
+    ]
+  },
+  {
+    "type": "compressor",
+    "name": "压缩器",
+    "description": "平滑收紧动态范围，并可补偿输出电平。",
+    "color": "#8e99a7",
+    "summaryKeys": [
+      "threshold_db",
+      "ratio"
+    ],
+    "parameters": [
+      {
+        "key": "threshold_db",
+        "label": "阈值",
+        "unit": "dB",
+        "min": -60,
+        "max": 0,
+        "step": 0.5,
+        "default": -18
+      },
+      {
+        "key": "ratio",
+        "label": "压缩比",
+        "unit": ":1",
+        "min": 1,
+        "max": 20,
+        "step": 0.5,
+        "default": 3
+      },
+      {
+        "key": "attack_ms",
+        "label": "攻击",
+        "unit": "ms",
+        "min": 0.5,
+        "max": 50,
+        "step": 0.5,
+        "default": 10
+      },
+      {
+        "key": "release_ms",
+        "label": "释放",
+        "unit": "ms",
+        "min": 10,
+        "max": 500,
+        "step": 1,
+        "default": 100
+      },
+      {
+        "key": "makeup_db",
+        "label": "补偿增益",
+        "unit": "dB",
+        "min": 0,
+        "max": 12,
+        "step": 0.5,
+        "default": 0
+      }
+    ]
+  },
+  {
+    "type": "pitch",
+    "name": "音高移位",
+    "description": "按半音升降调，保持共振峰与说话速度。",
+    "color": "#8e99a7",
+    "summaryKeys": [
+      "semitones"
+    ],
+    "parameters": [
+      {
+        "key": "semitones",
+        "label": "移位",
+        "unit": "半音",
+        "min": -12,
+        "max": 12,
+        "step": 0.1,
+        "default": 0
+      }
+    ]
+  },
+  {
+    "type": "reverb",
+    "name": "混响",
+    "description": "加入柔和空间尾音，保留可调的原音比例。",
+    "color": "#8e99a7",
+    "summaryKeys": [
+      "room",
+      "mix"
+    ],
+    "parameters": [
+      {
+        "key": "room",
+        "label": "空间",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "default": 35
+      },
+      {
+        "key": "damping",
+        "label": "阻尼",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "default": 50
+      },
+      {
+        "key": "mix",
+        "label": "混合",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "step": 1,
+        "default": 15
       }
     ]
   }

@@ -75,6 +75,26 @@ try {
  await click('旁路频率平移');await wait(async()=>!(await invoke('load_session')).session.chain[2].enabled);
  assert.equal((await invoke('load_session')).session.chain[2].enabled,false);
  await transport();await wait(async()=>!(await invoke('get_status')).running);
+ for(const name of ['原音','金属音','电话音','女声','炸麦','广播声','空灵声']) {
+   await click('声音预设');
+   await js(name=>Array.from(document.querySelectorAll('[role="menuitem"]')).find(n=>n.textContent.startsWith(name)).click(),name);
+   await pause(700);const preset=(await invoke('load_session')).session;
+   await cmd('/refresh');await wait(()=>js(()=>Boolean(document.querySelector('.library-card'))));
+   await captureErrors();assert.deepEqual((await invoke('load_session')).session.chain,preset.chain);
+   await transport();await wait(async()=>(await invoke('get_status')).running);await pause(500);
+   const startup=await invoke('get_status');await pause(2000);
+   const status=await invoke('get_status');console.log(JSON.stringify({preset:name,startup,status}));assert.equal(status.error,null);assert.equal(status.underruns,startup.underruns,name+' must not accumulate underruns after warmup');assert.equal(status.overflows,0,name+' overflows');
+   await transport();await wait(async()=>!(await invoke('get_status')).running);
+ }
+ assert.equal(await js(()=>document.querySelectorAll('.library-card').length),11);
+ for(const name of ['噪声门','共振峰移位','均衡器','压缩器','音高移位','混响']) {
+   await click('添加'+name);await pause(600);
+   await js(()=>{for(const n of document.querySelectorAll('.inspector input[type="number"]')) {
+     const value=Math.min(Number(n.max),Number(n.value)+Number(n.step));
+     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,String(value));
+     n.dispatchEvent(new Event('input',{bubbles:true}));n.focus();n.blur();
+   }});await pause(700);
+ }
  await transport();await wait(async()=>(await invoke('get_status')).running);
  await transport();await wait(async()=>!(await invoke('get_status')).running);
  await click('最大化窗口');await wait(()=>invoke('plugin:window|is_maximized',{label:'main'}));

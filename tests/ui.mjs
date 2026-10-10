@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { chromium } from '../src/app/node_modules/playwright-core/index.mjs';
-import { editorFlow, stored, beginDrag, movePointer, finishDrag } from './editor-flow.mjs';
+import { editorFlow, stored, raw, settle, beginDrag, movePointer, finishDrag } from './editor-flow.mjs';
+import { readFile } from 'node:fs/promises';
+const catalog=JSON.parse(await readFile(new URL('../src/app/src/filters.json',import.meta.url),'utf8'));
 const browser = await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
 const page = await browser.newPage({viewport:{width:1100,height:760},deviceScaleFactor:1.5});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
@@ -9,6 +11,31 @@ try {
  assert.equal(await page.title(),'isMyMicThatBad · 音频工作台');
  assert.equal(new URL(page.url()).host,'127.0.0.1:1420');
  const result=await editorFlow(page);
+ await raw(page);
+ assert.equal(await page.locator('.library-card').count(),11);
+ await page.getByRole('button',{name:'向后浏览滤镜库',exact:true}).click();
+ await page.waitForTimeout(250);
+ assert.ok(await page.locator('#filter-library').evaluate(n=>n.scrollLeft>0));
+ for(const type of ['gate','formant','eq','compressor','pitch','reverb','distortion']) {
+   const definition=catalog.find(d=>d.type===type);
+   await page.getByRole('button',{name:'添加'+definition.name,exact:true}).click();
+   await settle(page);
+   assert.equal(await page.locator('.inspector input[type="number"]').count(),definition.parameters.length);
+   for(const parameter of definition.parameters) {
+     const control=page.locator('.inspector').getByLabel(parameter.label,{exact:true});
+     const value=parameter.default+parameter.step;
+     await control.fill(String(value));await control.press('Tab');await settle(page);
+     assert.equal((await stored(page)).chain.at(-1).params[parameter.key],value);
+   }
+ }
+ for(const name of ['原音','金属音','电话音','女声','炸麦','广播声','空灵声']) {
+   await page.getByRole('button',{name:'声音预设',exact:true}).click();
+   await page.getByRole('menuitem',{name:new RegExp('^'+name)}).click();await settle(page);
+   const saved=await stored(page);await page.reload();await settle(page);
+   assert.deepEqual((await stored(page)).chain,saved.chain);
+ }
+ await raw(page);
+ await page.getByRole('button',{name:'添加增益',exact:true}).click();await settle(page);
  await page.screenshot({path:process.argv[2],fullPage:true});
  const box=await page.locator('.chain-viewport').boundingBox();
  await beginDrag(page,page.getByRole('button',{name:'选择增益滤镜',exact:true}));

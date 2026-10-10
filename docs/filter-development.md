@@ -5,9 +5,12 @@ The engine processes mono f32 blocks at 48 kHz. Start with `src/app/src-tauri/sr
 1. Allocate history and scratch buffers in the constructor. Keep processing free of allocation, blocking locks, disk access and logging.
 2. Add the filter type, name, description, color and parameter ranges/defaults to `src/app/src/filters.json`. The Rust validator and frontend share this file.
 3. Add the constructor arm to `Chain::new` in `dsp.rs`. The UI generates numeric controls and uses a fallback icon; no new card component is required.
+   Optional `summaryKeys` selects up to two main parameters for the card; all controls remain in the shared inspector.
 4. Validate changes through the `Chain` interface in `tests/audio_pipeline.rs`. Test a known signal, state across blocks, and parameter transitions. Smooth parameter updates and keep instance state independent.
 
 The template includes a working `amount_db` control with the same 10 ms smoothing as built-in filters. Replace its multiplication with your own algorithm. It is a compiled extension point, not a runtime DLL/script loader, and is not added as a redundant sixth built-in effect.
+
+v0.3 implementations live in the locally retained `src/app/src-tauri/src/effects.rs`: RMS gate, soft-knee compressor, three-band equalizer, pitch/formant processing and mono Schroeder reverb. Signalsmith Stretch is pinned to Rust wrapper 0.1.3, with a 2048-frame spectral window and 64-frame hop. Adjacent pitch/formant cards share one analysis while retaining independent smoothed parameters and bypass. Zero shifts use aligned dry audio. Both reported latency halves are declared, and compensation capacity covers 64 instances at the maximum 2048-frame per-filter delay. The wrapper formant-base setter incorrectly forwards to formant shift, so retain default analysis. Native builds require C++14/MSVC and libclang for bindgen; Use-Toolchain.ps1 locates the locally installed libclang 18.1.1. External code and all native sources remain excluded from Git.
 
 To register a copy of the template, append this definition to `filters.json`:
 
@@ -33,3 +36,5 @@ Hardware latency: `cargo test --release --features custom-protocol --manifest-pa
 The test selects the default physical microphone. For repeatable device comparisons, set `MIC_TEST_INPUT_ID` to an exact ID from `ismymicthatbad.exe --devices`; it changes only test selection, not Windows defaults or saved app settings. Run the virtual-only `measure_cable_without_microphone_or_dsp` test separately, never concurrently with the microphone test.
 
 The previous public-push authorization covered the initial v0.1 commit. New pushes require authorization within their own scope. Package generation creates no application installer, Git tag or GitHub Release. The application needs installed VB-CABLE and WebView2 even in portable mode.
+
+New preset calibration: export the four shared presets with `node src/app/node_modules/tsx/dist/cli.mjs tests/export-presets.ts <isolated-json-path>`; set MIC_TEST_PRESETS_FILE to that absolute path and select MIC_TEST_INPUT_ID. Run `new_presets_microphone_to_cable_p95_is_under_200ms` in the optimized hardware test. It predicts the reference using the same preset DSP, attributes each predicted output sample to its source capture time by subtracting declared algorithmic latency, then compares 2 ms RMS envelopes over 0..300 ms. This retains algorithmic latency in the measured total. It excludes processed-reference windows below -50 dB RMS, requires at least 20 correlated speech windows and 80% coverage, rejects insufficient signal, records startup counters after two seconds, and requires no subsequent underrun growth. Initialization gaps remain recorded, not erased. Keep the full 30-minute soak optional under the current waiver.

@@ -1,7 +1,7 @@
 import definitionsJson from './filters.json';
 export type FilterType = string;
 export interface Parameter { key: string; label: string; unit: string; min: number; max: number; step: number; default: number }
-export interface FilterDefinition { type: FilterType; name: string; description: string; color: string; parameters: Parameter[] }
+export interface FilterDefinition { type: FilterType; name: string; description: string; color: string; parameters: Parameter[]; summaryKeys?: string[] }
 export interface FilterInstance { id: string; type: FilterType; enabled: boolean; params: Record<string, number> }
 export interface Preset { id: string; name: string; chain: FilterInstance[] }
 export interface Session { schemaVersion: 1; inputId: string; outputId: string; monitorId: string; monitoring: boolean; bufferMs: number; chain: FilterInstance[]; presets: Preset[] }
@@ -22,11 +22,32 @@ export function duplicateFilter(chain: FilterInstance[], id: string): FilterInst
   const next = [...chain]; next.splice(index + 1, 0, ...cloneChain([chain[index]])); return next;
 }
 export function removeFilter(chain: FilterInstance[], id: string): FilterInstance[] { return chain.filter(x => x.id !== id); }
-const node = (type: FilterType, params: Record<string, number>, id: string): FilterInstance => ({id, type, enabled: true, params});
+const node = (type: FilterType, params: Record<string, number>, id: string): FilterInstance => {
+  const definition = definitions.find(item => item.type === type)!;
+  return {id, type, enabled: true, params: {...Object.fromEntries(definition.parameters.map(p => [p.key, p.default])), ...params}};
+};
 export const builtins: Preset[] = [
   {id:'builtin-raw', name:'原音', chain:[]},
   {id:'builtin-metal', name:'金属音', chain:[node('frequency',{shift_hz:100},'metal-f'),node('distortion',{drive_db:6,mix:25},'metal-d'),node('gain',{gain_db:-6},'metal-g')]},
-  {id:'builtin-phone', name:'电话音', chain:[node('highpass',{cutoff:300},'phone-h'),node('lowpass',{cutoff:3400},'phone-l')]}
+  {id:'builtin-phone', name:'电话音', chain:[node('highpass',{cutoff:300},'phone-h'),node('lowpass',{cutoff:3400},'phone-l')]},
+  {id:'builtin-female', name:'女声', chain:[
+    node('gate',{threshold_db:-50},'female-gate'), node('highpass',{cutoff:80},'female-high'),
+    node('pitch',{semitones:5},'female-pitch'), node('formant',{semitones:2.5},'female-formant'),
+    node('eq',{low_gain_db:-2,mid_gain_db:1,mid_freq:2400,high_gain_db:2},'female-eq'),
+    node('compressor',{threshold_db:-20,ratio:2,makeup_db:2},'female-compressor'), node('gain',{gain_db:-3},'female-gain')]},
+  {id:'builtin-blown-mic', name:'炸麦', chain:[
+    node('highpass',{cutoff:120},'blown-high'),
+    node('compressor',{threshold_db:-24,ratio:6,attack_ms:2,release_ms:80,makeup_db:6},'blown-compressor'),
+    node('gain',{gain_db:6},'blown-drive'), node('distortion',{drive_db:24,mix:100,clip:85},'blown-distortion'),
+    node('lowpass',{cutoff:6500},'blown-low'), node('gain',{gain_db:-12},'blown-output')]},
+  {id:'builtin-broadcast', name:'广播声', chain:[
+    node('gate',{threshold_db:-48},'broadcast-gate'), node('highpass',{cutoff:80},'broadcast-high'),
+    node('eq',{low_gain_db:2,low_freq:150,mid_gain_db:1,mid_freq:1500,high_gain_db:1},'broadcast-eq'),
+    node('compressor',{makeup_db:3},'broadcast-compressor'), node('gain',{gain_db:-3},'broadcast-output')]},
+  {id:'builtin-ethereal', name:'空灵声', chain:[
+    node('gate',{threshold_db:-50},'ethereal-gate'), node('pitch',{semitones:3},'ethereal-pitch'),
+    node('formant',{semitones:1},'ethereal-formant'), node('eq',{high_gain_db:2},'ethereal-eq'),
+    node('reverb',{room:70,damping:45,mix:25},'ethereal-reverb'), node('gain',{gain_db:-4},'ethereal-output')]}
 ];
 export const emptySession: Session = {schemaVersion:1,inputId:'',outputId:'',monitorId:'',monitoring:false,bufferMs:5,chain:[],presets:[]};
 function validateChain(value: unknown): FilterInstance[] {
@@ -38,7 +59,8 @@ function validateChain(value: unknown): FilterInstance[] {
     const definition = definitions.find(d => d.type === v.type); if (!definition) throw new Error('未知滤镜类型');
     const params: Record<string,number> = {};
     for (const p of definition.parameters) {
-      const n = v.params?.[p.key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < p.min || n > p.max) throw new Error('滤镜参数超出范围');
+      const legacyClip = definition.type === 'distortion' && p.key === 'clip' && v.params && typeof v.params === 'object' && !Object.hasOwn(v.params, 'clip');
+      const n = legacyClip ? 0 : v.params?.[p.key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < p.min || n > p.max) throw new Error('滤镜参数超出范围');
       params[p.key] = n;
     }
     return {id:v.id,type:definition.type,enabled:v.enabled,params};

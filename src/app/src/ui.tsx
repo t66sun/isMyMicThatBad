@@ -10,6 +10,12 @@ export function FilterIcon({ type, size = 26 }: { type: string; size?: number })
     highpass: 'M3 21 12 4h9',
     lowpass: 'M3 4h9l9 17',
     distortion: 'M2 17c3 0 4-12 9-12s4 12 11 12',
+    gate: 'M3 17h5V7h8v10h5M8 4v16M16 4v16',
+    formant: 'M2 17c3 0 3-9 6-9s3 9 6 9 3-13 8-13',
+    eq: 'M4 3v18M12 3v18M20 3v18M1 8h6M9 16h6M17 6h6',
+    compressor: 'M3 19 11 11 21 7M3 4v17h18',
+    pitch: 'M5 18V6m-3 3 3-3 3 3M16 6v12m-3-3 3 3 3-3',
+    reverb: 'M2 10v4M6 6v12M10 3v18M14 6v12M18 9v6M22 11v2',
   };
   if (type === 'gain') return <AudioLines size={size} strokeWidth={1.7} aria-hidden="true" />;
   if (!paths[type]) return <SlidersHorizontal size={size} strokeWidth={1.7} aria-hidden="true" />;
@@ -28,8 +34,10 @@ export function useReducedMotion() {
 }
 
 export function Summary({ node, definition }: { node: FilterInstance; definition: FilterDefinition }) {
-  return <div className="card-values">{definition.parameters.map(p =>
-    <span key={p.key}>{node.params[p.key].toLocaleString('zh-CN', { maximumFractionDigits: 2 })}{p.unit === '%' ? '%' : ' ' + p.unit}</span>
+  const parameters = definition.summaryKeys ? definition.summaryKeys.map(key => definition.parameters.find(p => p.key === key)!) : definition.parameters;
+  return <div className="card-values">{parameters.slice(0, 2).map(p =>
+    <span key={p.key}>{definition.summaryKeys && parameters.length > 1 ? <small>{p.label}</small> : null}
+      {node.params[p.key].toLocaleString('zh-CN', { maximumFractionDigits: 2 })}{!p.unit ? '' : ['%', ':1'].includes(p.unit) ? p.unit : ' ' + p.unit}</span>
   )}</div>;
 }
 

@@ -136,7 +136,7 @@ export async function editorFlow(page) {
   assert.equal(await page.getByRole('spinbutton', { name: '驱动', exact: true }).inputValue(), '24');
   await page.getByRole('spinbutton', { name: '混合', exact: true }).fill('40');
   await page.getByRole('spinbutton', { name: '混合', exact: true }).press('Enter'); await settle(page);
-  assert.deepEqual((await stored(page)).chain[4].params, { drive_db: 24, mix: 40 });
+  assert.deepEqual((await stored(page)).chain[4].params, { drive_db: 24, mix: 40, clip: 0 });
   for (const [name, value] of [['驱动', '6'], ['混合', '25']]) {
     await page.getByRole('spinbutton', { name, exact: true }).fill(value);
     await page.getByRole('spinbutton', { name, exact: true }).press('Enter');

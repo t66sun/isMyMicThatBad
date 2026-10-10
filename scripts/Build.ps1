@@ -26,8 +26,14 @@ try {
     foreach ($dependency in $metadata.packages | Where-Object { $_.source }) {
         $folder = Split-Path -Parent $dependency.manifest_path
         [void]$notices.AppendLine("`n--- $($dependency.name) $($dependency.version): $($dependency.license) ---")
+        if ($dependency.repository) { [void]$notices.AppendLine("Source: $($dependency.repository)") }
         foreach ($file in Get-ChildItem -LiteralPath $folder -File | Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING)' }) {
             [void]$notices.AppendLine([System.IO.File]::ReadAllText($file.FullName))
+        }
+        if ($dependency.name -eq 'signalsmith-stretch') {
+            foreach ($library in 'signalsmith-stretch','signalsmith-linear') {
+                [void]$notices.AppendLine([System.IO.File]::ReadAllText((Join-Path $folder "$library/LICENSE.txt")))
+            }
         }
     }
     $npmPaths = npm.cmd --prefix src/app list --omit=dev --all --parseable
