@@ -1,0 +1,7 @@
+{
+  "include": ["src/", "tests/", "scripts/"],
+  "exclude": [
+    "src/app/src-tauri/gen/",
+    "src/app/src-tauri/resources/"
+  ]
+}
