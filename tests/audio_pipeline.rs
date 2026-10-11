@@ -39,6 +39,48 @@ fn tone(frequency: f32, length: usize) -> Vec<f32> {
         .map(|i| 0.15 * (std::f32::consts::TAU * frequency * i as f32 / 48000.0).sin())
         .collect()
 }
+
+#[test]
+fn tremolo_controls_rate_depth_and_preserves_phase_across_blocks() {
+    let input = vec![0.2; 48000];
+    for rate in [0.1, 5.0, 20.0] {
+        for depth in [0.0, 50.0, 100.0] {
+            let configs = [config("tremolo", &[("rate_hz", rate), ("depth", depth)])];
+            let output = render(&configs, &input, 256);
+            let small = render(&configs, &input, 31);
+            assert_eq!(output, small, "LFO phase survives block boundaries");
+            for (i, value) in output.iter().enumerate() {
+                let phase = std::f64::consts::TAU * rate as f64 * i as f64 / 48000.0;
+                let expected = 0.2 * (1.0 - depth / 100.0 * (0.5 - 0.5 * phase.cos() as f32));
+                assert!((value - expected).abs() < 1e-6, "rate {rate}, depth {depth}, sample {i}");
+                assert!(value.is_finite() && (0.0..=0.2).contains(value));
+            }
+        }
+    }
+    let mut configs = vec![config("tremolo", &[("rate_hz", 5.0), ("depth", 100.0)])];
+    let mut chain = Chain::new(&configs).unwrap();
+    assert_eq!(chain.latency, 0);
+    let input = [0.2; 256];
+    let mut output = [0.0; 256];
+    for _ in 0..18 { chain.process(&input, &mut output); }
+    let previous = output[255];
+    configs[0].params.insert("depth".into(), 0.0);
+    chain.update_from(&Chain::new(&configs).unwrap());
+    chain.process(&input, &mut output);
+    assert!((output[0] - previous).abs() < 0.001, "parameter edits must be smoothed");
+    chain.process(&input, &mut output);
+    assert!((output[255] - 0.2).abs() < 1e-6);
+    configs[0].enabled = false;
+    configs[0].params.insert("depth".into(), 100.0);
+    chain.update_from(&Chain::new(&configs).unwrap());
+    for _ in 0..4 { chain.process(&input, &mut output); }
+    assert_eq!(output, input, "bypass remains dry");
+    let mut second = configs[0].clone(); second.id = "second".into(); second.enabled = true;
+    configs[0].enabled = true;
+    let single = render(&configs, &vec![0.2; 9600], 256);
+    let paired = render(&[configs[0].clone(), second], &vec![0.2; 9600], 256);
+    for (a, b) in single.iter().zip(paired) { assert!((b - a * a / 0.2).abs() < 1e-6); }
+}
 fn magnitude(samples: &[f32], frequency: f32) -> f32 {
     let (mut real, mut imag) = (0.0_f64, 0.0_f64);
     for (i, x) in samples.iter().enumerate() {

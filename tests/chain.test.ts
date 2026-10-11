@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFilter, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, validateSession, definitions, builtins } from '../src/app/src/model.ts';
+import { editChain, undoChain, redoChain, emptyHistory } from '../src/app/src/history.ts';
 test('insertion, reorder and duplication preserve independent instance identity', () => {
   let chain = insertFilter([], definitions[0], 0);
   chain = insertFilter(chain, definitions[1], 0);
@@ -15,8 +16,8 @@ test('insertion, reorder and duplication preserve independent instance identity'
   assert.equal(chain[1].params.cutoff, 80);
   assert.equal(removeFilter(chain, id).length, 2);
 });
-test('all eleven filters and seven presets have complete valid independent metadata', () => {
-  assert.equal(definitions.length, 11); assert.equal(builtins.length, 7);
+test('all twelve filters and seven presets have complete valid independent metadata', () => {
+  assert.equal(definitions.length, 12); assert.equal(builtins.length, 7);
   assert.equal(new Set(definitions.map(d => d.type)).size, definitions.length);
   for (const definition of definitions) {
     const node = createFilter(definition);
@@ -25,6 +26,42 @@ test('all eleven filters and seven presets have complete valid independent metad
   }
   for (const preset of builtins) validateSession({...emptySession, chain:preset.chain});
   assert.deepEqual(builtins.slice(3).map(p => p.name), ['女声','炸麦','广播声','空灵声']);
+});
+
+test('chain history restores identities, parameters, order and bypass without mutating snapshots', () => {
+  const initial = insertFilter([], definitions[0], 0);
+  const duplicate = duplicateFilter(initial, initial[0].id);
+  const edited = duplicate.map((node, i) => i ? { ...node, enabled: false, params: { shift_hz: 200 } } : node);
+  const reordered = moveFilter(edited, edited[1].id, 0);
+  const deleted = removeFilter(reordered, reordered[1].id);
+  const snapshots = [initial, duplicate, edited, reordered, deleted, builtins[3].chain];
+  let history = emptyHistory;
+  for (const chain of snapshots) history = editChain(history, chain);
+  assert.equal(editChain(history, structuredClone(history.present)), history, 'no-op does not create an edit');
+  for (const chain of [...snapshots.slice(0, -1)].reverse().concat([[]])) {
+    history = undoChain(history); assert.deepEqual(history.present, chain);
+  }
+  assert.equal(undoChain(history), history);
+  for (const chain of snapshots) { history = redoChain(history); assert.deepEqual(history.present, chain); }
+  assert.equal(redoChain(history), history);
+  history = editChain(undoChain(history), initial);
+  assert.equal(history.future.length, 0, 'editing after undo clears redo');
+  assert.equal(initial[0].enabled, true); assert.equal(initial[0].params.shift_hz, 0);
+});
+
+test('one slider gesture is one undo and later gestures remain separate', () => {
+  const initial = insertFilter([], definitions[0], 0);
+  let history = { ...emptyHistory, present: initial };
+  const change = (value: number) => initial.map(node => ({ ...node, params: { shift_hz: value } }));
+  history = editChain(history, change(100), 'slider');
+  history = editChain(history, change(200), 'slider');
+  assert.equal(history.past.length, 1);
+  assert.deepEqual(undoChain(history).present, initial);
+  history = { ...history, group: null };
+  history = editChain(history, change(300), 'slider');
+  assert.equal(undoChain(history).present[0].params.shift_hz, 200);
+  history = editChain(undoChain(history), change(400), 'slider');
+  assert.equal(history.past.length, 2); assert.equal(history.future.length, 0);
 });
 test('legacy distortion normalization retains identity and defaults only missing clipping', () => {
   const old = {id:'old-distortion',type:'distortion',enabled:true,params:{drive_db:6,mix:25}};

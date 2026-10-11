@@ -10,6 +10,52 @@ export async function raw(page) {
   await page.getByRole('menuitem', { name: /^原音/ }).click();
   await settle(page);
 }
+
+export async function historyFlow(page) {
+  await raw(page); await page.reload(); await settle(page);
+  const undo = page.getByRole('button', { name: '撤销管线修改', exact: true });
+  const redo = page.getByRole('button', { name: '重做管线修改', exact: true });
+  assert.ok(await undo.isDisabled()); assert.ok(await redo.isDisabled());
+  const snapshots = [(await stored(page)).chain];
+  const remember = async () => { await settle(page); snapshots.push((await stored(page)).chain); };
+  await page.getByRole('button', { name: '添加增益', exact: true }).click(); await remember();
+  await page.getByRole('spinbutton', { name: '增益', exact: true }).fill('-6');
+  await page.getByRole('spinbutton', { name: '增益', exact: true }).press('Enter'); await remember();
+  await page.getByRole('button', { name: '旁路增益', exact: true }).click(); await remember();
+  await menu(page, 0, '复制滤镜'); await remember();
+  await menu(page, 1, '向前移动'); await remember();
+  await menu(page, 0, '删除滤镜'); await remember();
+  await page.getByRole('button', { name: '声音预设', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^女声/ }).click(); await remember();
+  for (const chain of snapshots.slice(0, -1).reverse()) {
+    await undo.click(); await settle(page); assert.deepEqual((await stored(page)).chain, chain);
+  }
+  assert.ok(await undo.isDisabled());
+  await page.locator('.chain-viewport').focus(); await page.keyboard.press('Control+Shift+Z'); await settle(page);
+  assert.deepEqual((await stored(page)).chain, snapshots[1]);
+  await page.keyboard.press('Control+Y'); await settle(page);
+  assert.deepEqual((await stored(page)).chain, snapshots[2]);
+  const input = page.getByRole('spinbutton', { name: '增益', exact: true });
+  await input.focus(); await page.keyboard.press('Control+Z'); await settle(page);
+  assert.deepEqual((await stored(page)).chain, snapshots[2], 'text inputs retain their own undo');
+  await page.locator('.chain-viewport').focus(); await page.keyboard.press('Control+Z'); await settle(page);
+  assert.deepEqual((await stored(page)).chain, snapshots[1]);
+  await redo.click(); await settle(page);
+  const slider = page.getByRole('slider', { name: '增益滑块', exact: true });
+  const box = await slider.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down(); await page.mouse.move(box.x + box.width * .7, box.y + box.height / 2, { steps: 12 });
+  await page.mouse.up(); await settle(page);
+  assert.notDeepEqual((await stored(page)).chain, snapshots[2]);
+  await undo.click(); await settle(page);
+  assert.deepEqual((await stored(page)).chain, snapshots[2], 'whole slider gesture undoes in one step');
+  await page.getByRole('button', { name: '添加颤音', exact: true }).click(); await settle(page);
+  assert.ok(await redo.isDisabled(), 'new edit clears redo');
+  const changed = (await stored(page)).chain;
+  await page.reload(); await settle(page);
+  assert.deepEqual((await stored(page)).chain, changed);
+  assert.ok(await undo.isDisabled()); assert.ok(await redo.isDisabled(), 'history is session-local');
+}
 export async function beginDrag(page, locator) {
   const box = await locator.boundingBox();
   assert.ok(box);

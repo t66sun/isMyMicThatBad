@@ -86,8 +86,8 @@ try {
    const status=await invoke('get_status');console.log(JSON.stringify({preset:name,startup,status}));assert.equal(status.error,null);assert.equal(status.underruns,startup.underruns,name+' must not accumulate underruns after warmup');assert.equal(status.overflows,0,name+' overflows');
    await transport();await wait(async()=>!(await invoke('get_status')).running);
  }
- assert.equal(await js(()=>document.querySelectorAll('.library-card').length),11);
- for(const name of ['噪声门','共振峰移位','均衡器','压缩器','音高移位','混响']) {
+ assert.equal(await js(()=>document.querySelectorAll('.library-card').length),12);
+ for(const name of ['噪声门','共振峰移位','均衡器','压缩器','音高移位','混响','颤音']) {
    await click('添加'+name);await pause(600);
    await js(()=>{for(const n of document.querySelectorAll('.inspector input[type="number"]')) {
      const value=Math.min(Number(n.max),Number(n.value)+Number(n.step));

@@ -7,6 +7,7 @@ import { FilterIcon, Menu, ParameterControl, WindowControls } from './ui';
 import appIcon from './assets/app-icon.svg';
 import { listen } from '@tauri-apps/api/event';
 import { version } from '../package.json';
+import { editChain, undoChain, redoChain, emptyHistory } from './history';
 
 function Meter({ label, value }: { label: string; value: number }) {
   return <div className="meter"><div><span>{label}</span><span>{value > 0 ? (20 * Math.log10(value)).toFixed(1) + ' dB' : '−∞ dB'}</span></div>
@@ -14,7 +15,9 @@ function Meter({ label, value }: { label: string; value: number }) {
 }
 
 export default function App() {
-  const [session, setSession] = useState<Session>({ ...emptySession });
+  const [sessionSettings, setSession] = useState<Omit<Session, 'chain'>>({ ...emptySession });
+  const [history, setHistory] = useState(emptyHistory);
+  const session = useMemo<Session>(() => ({ ...sessionSettings, chain: history.present }), [sessionSettings, history.present]);
   const [devices, setDevices] = useState<api.Device[]>([]);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<api.Status>(api.stopped);
@@ -46,6 +49,7 @@ export default function App() {
       if (!restored.outputId) restored.outputId = list.find(d => !d.input && d.name.includes('CABLE Input'))?.id ?? '';
       if (!restored.monitorId) restored.monitorId = list.find(d => !d.input && d.isDefault && !d.name.includes('CABLE'))?.id ?? '';
       setDevices(list); setSession(restored); setSelectedId(restored.chain[0]?.id ?? null);
+      setHistory({ ...emptyHistory, present: restored.chain });
       setNotice(saved.warning ?? ''); setReady(true);
     }).catch(error => { if (active) setError(String(error)); });
     return () => { active = false; };
@@ -78,11 +82,29 @@ export default function App() {
     setSelectedId(id);
     if (id && focus) requestAnimationFrame(() => document.getElementById('select-' + id)?.focus({ preventScroll: true }));
   }, []);
-  const changeChain = useCallback((chain: FilterInstance[]) => {
+  const changeChain = useCallback((chain: FilterInstance[], group: string | null = null) => {
     setError('');
-    setSession(previous => ({ ...previous, chain }));
+    setHistory(previous => editChain(previous, chain, group));
     setAnnouncement('声音管线已更新，共 ' + chain.length + ' 个滤镜。');
   }, []);
+  const endEdit = useCallback(() => setHistory(previous => previous.group === null ? previous : { ...previous, group: null }), []);
+  const undo = useCallback(() => {
+    setError(''); setHistory(undoChain); setAnnouncement('已撤销声音管线修改。');
+  }, []);
+  const redo = useCallback(() => {
+    setError(''); setHistory(redoChain); setAnnouncement('已重做声音管线修改。');
+  }, []);
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (!ready || dragging || event.altKey || !(event.ctrlKey || event.metaKey) || document.querySelector('dialog[open]')
+        || (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]'))) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z' && !event.shiftKey && history.past.length) { event.preventDefault(); undo(); }
+      else if ((key === 'y' || key === 'z' && event.shiftKey) && history.future.length) { event.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  }, [ready, dragging, history.past.length, history.future.length, undo, redo]);
   const add = useCallback((definition: FilterDefinition, index: number) => {
     if (session.chain.length >= 64) { setNotice('最多可以加入 64 个滤镜。'); return; }
     const chain = insertFilter(session.chain, definition, index);
@@ -139,7 +161,7 @@ export default function App() {
   };
   const savePreset = () => {
     if (!presetName.trim() || session.presets.length >= 100) return;
-    setSession(previous => ({ ...previous, presets: [...previous.presets, { id: crypto.randomUUID(), name: presetName.trim(), chain: cloneChain(previous.chain) }] }));
+    setSession(previous => ({ ...previous, presets: [...previous.presets, { id: crypto.randomUUID(), name: presetName.trim(), chain: cloneChain(session.chain) }] }));
     setPresetName('');
     presetDialog.current?.close();
   };
@@ -182,7 +204,8 @@ export default function App() {
       {!ready ? <button onClick={() => window.location.reload()}>重新载入</button> : error ? <button aria-label="关闭错误提示" onClick={() => setError('')}><X size={15} aria-hidden="true" /></button> : null}</div> : null}
     {notice ? <div role="status" className="message-banner"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice('')}><X size={15} aria-hidden="true" /></button></div> : null}
     <main className="workspace">
-      <ChainEditor chain={session.chain} selectedId={selected?.id ?? null} onSelect={select} onChange={changeChain} onAdd={add} onAction={action} onDraggingChange={setDragging} />
+      <ChainEditor chain={session.chain} selectedId={selected?.id ?? null} onSelect={select} onChange={changeChain} onAdd={add} onAction={action} onDraggingChange={setDragging}
+        canUndo={ready && history.past.length > 0} canRedo={ready && history.future.length > 0} onUndo={undo} onRedo={redo} />
       <section className="inspector glass" aria-label="滤镜参数">
         {selected && definition ? <>
           <div className="inspector-identity"><div className="inspector-icon glass"><FilterIcon type={selected.type} size={34} /></div>
@@ -190,7 +213,7 @@ export default function App() {
           </div>
           <fieldset className={'inspector-fields' + (definition.parameters.length > 1 ? ' multiple-parameters' : '')} disabled={dragging}><legend className="sr-only">{definition.name}参数</legend>
             {definition.parameters.map(parameter => <ParameterControl key={selected.id + parameter.key} node={selected} parameter={parameter}
-              onChange={(key, value) => changeChain(session.chain.map(node => node.id === selected.id ? { ...node, params: { ...node.params, [key]: value } } : node))} />)}
+              onChange={(key, value) => changeChain(session.chain.map(node => node.id === selected.id ? { ...node, params: { ...node.params, [key]: value } } : node), selected.id + ':' + key)} onChangeEnd={endEdit} />)}
             <p className="inspector-description">{definition.description}</p>
           </fieldset>
         </> : <div className="inspector-empty"><FilterIcon type="custom" size={30} /><div><h2>选择一个滤镜</h2><p>参数会在这里显示</p></div></div>}

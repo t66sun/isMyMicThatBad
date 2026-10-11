@@ -8,6 +8,30 @@ const RMS_SAMPLES: usize = 240;
 const VOICE_WINDOW: usize = 2048;
 const VOICE_HOP: usize = 64;
 
+pub(crate) struct Tremolo {
+    phase: f64,
+    rate: Smooth,
+    depth: Smooth,
+}
+impl Tremolo {
+    pub(crate) fn new(p: &Params) -> Self {
+        Self { phase: 0.0, rate: Smooth::new(p["rate_hz"]), depth: Smooth::new(p["depth"] / 100.0) }
+    }
+}
+impl Filter for Tremolo {
+    fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        for (x, y) in input.iter().zip(output) {
+            *y = *x * (1.0 - self.depth.next() * (0.5 - 0.5 * self.phase.cos() as f32));
+            self.phase = (self.phase + std::f64::consts::TAU * self.rate.next() as f64 / RATE as f64)
+                .rem_euclid(std::f64::consts::TAU);
+        }
+    }
+    fn set_params(&mut self, p: &Params) {
+        self.rate.set(p["rate_hz"]);
+        self.depth.set(p["depth"] / 100.0);
+    }
+}
+
 fn db_to_gain(db: f32) -> f32 {
     10.0_f32.powf(db / 20.0)
 }

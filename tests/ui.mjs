@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from '../src/app/node_modules/playwright-core/index.mjs';
-import { editorFlow, stored, raw, settle, beginDrag, movePointer, finishDrag } from './editor-flow.mjs';
+import { editorFlow, historyFlow, stored, raw, settle, beginDrag, movePointer, finishDrag } from './editor-flow.mjs';
 import { readFile } from 'node:fs/promises';
 const catalog=JSON.parse(await readFile(new URL('../src/app/src/filters.json',import.meta.url),'utf8'));
 const browser = await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
@@ -11,12 +11,13 @@ try {
  assert.equal(await page.title(),'isMyMicThatBad · 音频工作台');
  assert.equal(new URL(page.url()).host,'127.0.0.1:1420');
  const result=await editorFlow(page);
+ await historyFlow(page);
  await raw(page);
- assert.equal(await page.locator('.library-card').count(),11);
+ assert.equal(await page.locator('.library-card').count(),12);
  await page.getByRole('button',{name:'向后浏览滤镜库',exact:true}).click();
  await page.waitForTimeout(250);
  assert.ok(await page.locator('#filter-library').evaluate(n=>n.scrollLeft>0));
- for(const type of ['gate','formant','eq','compressor','pitch','reverb','distortion']) {
+ for(const type of ['gate','formant','eq','compressor','pitch','reverb','distortion','tremolo']) {
    const definition=catalog.find(d=>d.type===type);
    await page.getByRole('button',{name:'添加'+definition.name,exact:true}).click();
    await settle(page);

@@ -3,7 +3,7 @@ import { DragDropProvider, DragOverlay, useDraggable, useDroppable, type DragMov
 import { useSortable } from '@dnd-kit/react/sortable';
 import { Accessibility, AutoScroller, PointerSensor, PointerActivationConstraints } from '@dnd-kit/dom';
 import { OptimisticSortingPlugin } from '@dnd-kit/dom/sortable';
-import { Plus, Power, Ellipsis, Copy, Trash2, ArrowLeft, ArrowRight, Mic, Cable } from 'lucide-react';
+import { Plus, Power, Ellipsis, Copy, Trash2, ArrowLeft, ArrowRight, Mic, Cable, Undo2, Redo2 } from 'lucide-react';
 import { definitions, moveFilter, type FilterDefinition, type FilterInstance } from './model';
 import { FilterIcon, Menu, Summary, useReducedMotion } from './ui';
 
@@ -65,8 +65,9 @@ function InsertionSlot({ index, active, onPick }: { index: number; active: boole
     <button aria-label={'在位置 ' + (index + 1) + ' 插入滤镜'} title="选择此位置，再点击上方滤镜" onClick={onPick}><Plus size={12} aria-hidden="true" /></button><span /></div>;
 }
 
-export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSelect, onChange, onAdd, onAction, onDraggingChange }: {
+export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSelect, onChange, onAdd, onAction, onDraggingChange, canUndo, canRedo, onUndo, onRedo }: {
   chain: FilterInstance[]; selectedId: string | null; onSelect: (id: string) => void; onChange: (chain: FilterInstance[]) => void;
+  canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void;
   onAdd: (definition: FilterDefinition, index: number) => void; onAction: (id: string, action: CardAction) => void; onDraggingChange: (dragging: boolean) => void;
 }) {
   const reduced = useReducedMotion();
@@ -209,7 +210,11 @@ export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSele
         onAdd={() => { if (suppressClick.current || dragRef.current) return; onAdd(definition, insertAt ?? chain.length); setInsertAt(null); }} />)}</div>
     </section>
     <section className="chain-panel" aria-label="滤镜管线">
-      <div className="section-heading"><h2>声音管线</h2><span>{chain.length} 个滤镜</span><span className="chain-hint">从左到右处理</span></div>
+      <div className="section-heading"><h2>声音管线</h2><span>{chain.length} 个滤镜</span>
+        <div className="history-controls">
+          <button className="icon-button" aria-label="撤销管线修改" title="撤销 (Ctrl+Z)" disabled={!canUndo || Boolean(drag)} onClick={onUndo}><Undo2 size={17} aria-hidden="true" /></button>
+          <button className="icon-button" aria-label="重做管线修改" title="重做 (Ctrl+Y / Ctrl+Shift+Z)" disabled={!canRedo || Boolean(drag)} onClick={onRedo}><Redo2 size={17} aria-hidden="true" /></button>
+        </div><span className="chain-hint">从左到右处理</span></div>
       <div ref={element => { viewport.current = element; dropRef(element); }} className={'chain-viewport' + (isDropTarget ? ' drop-active' : '')} tabIndex={0} aria-label="横向声音管线">
         <div ref={track} className="chain-track">
           <div className="endpoint"><span className="glass"><Mic size={23} aria-hidden="true" /></span><small>输入</small></div>

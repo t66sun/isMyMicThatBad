@@ -218,6 +218,7 @@ impl Chain {
                     None,
                 )?),
                 "reverb" => Box::new(crate::effects::Reverb::new(&config.params)),
+                "tremolo" => Box::new(crate::effects::Tremolo::new(&config.params)),
                 _ => return Err("未知滤镜".into()),
             };
             let frames = processor.latency();
