@@ -227,6 +227,12 @@ impl Reader {
         monitor: bool,
     ) -> Result<Self, String> {
         let converter = Converter::new(48000, rate)?;
+        let target = target.min(
+            source
+                .buffer()
+                .capacity()
+                .saturating_sub(converter.max_input_frames()),
+        );
         let input = vec![0.0; converter.max_input_frames()];
         Ok(Self {
             source,
@@ -286,7 +292,9 @@ impl Reader {
                 return 0.0;
             }
             for value in &mut self.input[..needed] {
-                *value = self.source.pop().unwrap_or(0.0);
+                let sample = self.source.pop().unwrap_or(0.0);
+                // Inaudible tails otherwise incur denormal penalties in the sinc callback.
+                *value = if sample.abs() < 1e-20 { 0.0 } else { sample };
             }
             if let Err(error) = self
                 .converter
@@ -410,7 +418,7 @@ impl Runtime {
             .store(settings.monitoring, Ordering::Relaxed);
         let (capture_producer, mut capture_consumer) =
             RingBuffer::new((input_rate as usize / 10).max(BLOCK * 8));
-        let capacity = (goal * 4).max(4800);
+        let capacity = (goal * 4).max(4800).div_ceil(BLOCK) * BLOCK;
         let (mut main_producer, main_consumer) = RingBuffer::new(capacity);
         let (mut monitor_producer, monitor_consumer) = RingBuffer::new(capacity);
         let mut converter = Converter::new(input_rate, 48000)?;
@@ -426,7 +434,11 @@ impl Runtime {
         let output_rate = main_config.sample_rate();
         let output = build_output(&main, main_config, reader, Arc::clone(&stats), false)?;
         let period = output.buffer_size().map_err(|e| e.to_string())? as usize;
-        let goal = goal.max((period * 2 * 48000 / output_rate as usize) + BLOCK);
+        // Three periods cover larger WASAPI callbacks and worker jitter; leave space for sinc priming.
+        let goal = goal
+            .max((period * 3 * 48000 / output_rate as usize) + BLOCK)
+            .min(capacity - BLOCK);
+        let startup = (goal + BLOCK + period * 48000 / output_rate as usize).min(capacity);
         let monitor =
             if !settings.monitor_id.is_empty() && settings.monitor_id != settings.output_id {
                 let attempt = (|| {
@@ -493,13 +505,12 @@ impl Runtime {
                             }
                         }
                     }
-                    // The output resampler needs one extra block when priming its sinc history.
-                    let demand = goal
-                        + if worker_stats.ready.load(Ordering::Relaxed) {
-                            0
-                        } else {
-                            BLOCK
-                        };
+                    // Prime sinc history and retain one device period for initial capture jitter.
+                    let demand = if worker_stats.ready.load(Ordering::Relaxed) {
+                        goal
+                    } else {
+                        startup
+                    };
                     if capacity - main_producer.slots() >= demand {
                         worker_stats.ready.store(true, Ordering::Relaxed);
                         thread::park_timeout(Duration::from_millis(20));
@@ -752,5 +763,70 @@ mod tests {
         reader.position = BLOCK;
         reader.next();
         assert_eq!(stats.underruns.load(Ordering::Relaxed), 2);
+    }
+    #[test]
+    fn monitoring_can_prime_at_the_queue_capacity_limit() {
+        for rate in [8000, 44100, 48000, 96000] {
+            let stats = Arc::new(Stats::default());
+            stats.monitoring.store(true, Ordering::Relaxed);
+            let (mut producer, consumer) = RingBuffer::new(4800);
+            let mut reader =
+                Reader::new(consumer, rate, 4800 - BLOCK, Arc::clone(&stats), true).unwrap();
+            for _ in 0..4800 {
+                producer.push(0.1).unwrap();
+            }
+            reader.next();
+            assert!(
+                !reader.warming,
+                "monitor at {rate} Hz must leave warmup when the queue is full"
+            );
+            let last = (0..BLOCK).map(|_| reader.next()).last().unwrap();
+            assert!(
+                last > 0.09,
+                "primed monitor at {rate} Hz must play queued audio"
+            );
+            assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
+        }
+    }
+    #[test]
+    fn inaudible_output_tails_become_silence_without_muting_voice() {
+        let stats = Arc::new(Stats::default());
+        let (mut producer, consumer) = RingBuffer::new(4096);
+        for _ in 0..1024 {
+            producer.push(1e-30).unwrap();
+        }
+        for _ in 0..2048 {
+            producer.push(0.1).unwrap();
+        }
+        let mut reader = Reader::new(consumer, 48000, 256, Arc::clone(&stats), false).unwrap();
+        for _ in 0..512 {
+            assert_eq!(reader.next(), 0.0);
+        }
+        let last = (0..1024).map(|_| reader.next()).last().unwrap();
+        assert!((last - 0.1).abs() < 0.001);
+        assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
+    }
+    #[test]
+    #[ignore = "machine-dependent output callback budget; run optimized"]
+    fn output_reader_quiet_tail_has_realtime_headroom() {
+        for value in [0.1, 0.0, 1e-30, 1e-44] {
+            let stats = Arc::new(Stats::default());
+            let (mut producer, consumer) = RingBuffer::new(48000 * 4);
+            for _ in 0..48000 * 4 {
+                producer.push(value).unwrap();
+            }
+            let mut reader = Reader::new(consumer, 48000, 256, Arc::clone(&stats), false).unwrap();
+            let started = Instant::now();
+            for _ in 0..48000 * 3 {
+                std::hint::black_box(reader.next());
+            }
+            let seconds = started.elapsed().as_secs_f64();
+            println!("output {value}: three seconds of audio processed in {seconds:.4} s");
+            assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
+            assert!(
+                seconds < 1.5,
+                "output resampling must leave half the real-time budget free"
+            );
+        }
     }
 }

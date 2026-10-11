@@ -601,8 +601,7 @@ fn new_presets_microphone_to_cable_p95_is_under_200ms() {
         }
         let p95 = good[(good.len() * 95).div_ceil(100) - 1];
         println!("{} p95: {p95:.2} ms", preset.name);
-        // shortcut: v0.3 records acknowledged underruns, enforce no growth during the stability milestone.
-        if p95 > 200.0 || status.overflows != 0 {
+        if p95 > 200.0 || status.underruns != 0 || status.overflows != 0 {
             failures.push(format!(
                 "{}: p95 {p95:.2} ms, underruns {} -> {}, overflows {}",
                 preset.name, startup.underruns, status.underruns, status.overflows
@@ -610,4 +609,77 @@ fn new_presets_microphone_to_cable_p95_is_under_200ms() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("; "));
+}
+
+#[test]
+#[ignore = "uses real microphone and VB-CABLE; stop other audio senders first"]
+fn female_preset_runs_without_underruns() {
+    let id = std::env::var("MIC_TEST_INPUT_ID").expect("Select the physical microphone explicitly");
+    let file = std::env::var("MIC_TEST_PRESETS_FILE").expect("Export shared presets first");
+    let presets: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+    assert_eq!(
+        presets[0]["name"], "女声",
+        "stability fixture must use the shared female preset"
+    );
+    let chain: Vec<FilterConfig> = serde_json::from_value(presets[0]["chain"].clone()).unwrap();
+    let output = cpal::default_host()
+        .output_devices()
+        .unwrap()
+        .find(|d| d.description().unwrap().name().contains("CABLE Input"))
+        .unwrap();
+    let seconds: u64 = std::env::var("MIC_TEST_SECONDS")
+        .unwrap_or_else(|_| "1800".into())
+        .parse()
+        .unwrap();
+    assert!((10..=1800).contains(&seconds));
+    let cable = cpal::default_host()
+        .input_devices()
+        .unwrap()
+        .find(|d| d.description().unwrap().name().contains("CABLE Output"))
+        .unwrap();
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let (cable_stream, mut received) = record(&cable, Arc::clone(&errors));
+    cable_stream.play().unwrap();
+    let mut controller = Controller::default();
+    controller
+        .start(&Session {
+            input_id: id,
+            output_id: output.id().unwrap().to_string(),
+            buffer_ms: 5,
+            chain,
+            ..Session::default()
+        })
+        .unwrap();
+    let mut device_xruns = 0;
+    for second in 1..=seconds {
+        std::thread::sleep(Duration::from_secs(1));
+        let mut frames = 0;
+        while received.pop().is_ok() {
+            frames += 1;
+        }
+        assert!(
+            frames > 0,
+            "virtual microphone must deliver audio to its reader"
+        );
+        assert!(
+            errors.lock().unwrap().is_empty(),
+            "virtual microphone capture error"
+        );
+        let status = controller.status();
+        if second == 1
+            || second % 30 == 0
+            || status.underruns != 0
+            || status.overflows != 0
+            || status.device_xruns != device_xruns
+        {
+            println!("{}", serde_json::json!({"second":second,"status":status}));
+        }
+        assert!(status.running && status.error.is_none());
+        assert_eq!(status.underruns, 0, "female preset underrun at {second}s");
+        assert_eq!(status.overflows, 0, "female preset overflow at {second}s");
+        device_xruns = status.device_xruns;
+    }
+    controller.stop();
+    drop(cable_stream);
 }

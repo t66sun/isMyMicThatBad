@@ -52,7 +52,10 @@ fn tremolo_controls_rate_depth_and_preserves_phase_across_blocks() {
             for (i, value) in output.iter().enumerate() {
                 let phase = std::f64::consts::TAU * rate as f64 * i as f64 / 48000.0;
                 let expected = 0.2 * (1.0 - depth / 100.0 * (0.5 - 0.5 * phase.cos() as f32));
-                assert!((value - expected).abs() < 1e-6, "rate {rate}, depth {depth}, sample {i}");
+                assert!(
+                    (value - expected).abs() < 1e-6,
+                    "rate {rate}, depth {depth}, sample {i}"
+                );
                 assert!(value.is_finite() && (0.0..=0.2).contains(value));
             }
         }
@@ -62,24 +65,35 @@ fn tremolo_controls_rate_depth_and_preserves_phase_across_blocks() {
     assert_eq!(chain.latency, 0);
     let input = [0.2; 256];
     let mut output = [0.0; 256];
-    for _ in 0..18 { chain.process(&input, &mut output); }
+    for _ in 0..18 {
+        chain.process(&input, &mut output);
+    }
     let previous = output[255];
     configs[0].params.insert("depth".into(), 0.0);
     chain.update_from(&Chain::new(&configs).unwrap());
     chain.process(&input, &mut output);
-    assert!((output[0] - previous).abs() < 0.001, "parameter edits must be smoothed");
+    assert!(
+        (output[0] - previous).abs() < 0.001,
+        "parameter edits must be smoothed"
+    );
     chain.process(&input, &mut output);
     assert!((output[255] - 0.2).abs() < 1e-6);
     configs[0].enabled = false;
     configs[0].params.insert("depth".into(), 100.0);
     chain.update_from(&Chain::new(&configs).unwrap());
-    for _ in 0..4 { chain.process(&input, &mut output); }
+    for _ in 0..4 {
+        chain.process(&input, &mut output);
+    }
     assert_eq!(output, input, "bypass remains dry");
-    let mut second = configs[0].clone(); second.id = "second".into(); second.enabled = true;
+    let mut second = configs[0].clone();
+    second.id = "second".into();
+    second.enabled = true;
     configs[0].enabled = true;
     let single = render(&configs, &vec![0.2; 9600], 256);
     let paired = render(&[configs[0].clone(), second], &vec![0.2; 9600], 256);
-    for (a, b) in single.iter().zip(paired) { assert!((b - a * a / 0.2).abs() < 1e-6); }
+    for (a, b) in single.iter().zip(paired) {
+        assert!((b - a * a / 0.2).abs() < 1e-6);
+    }
 }
 fn magnitude(samples: &[f32], frequency: f32) -> f32 {
     let (mut real, mut imag) = (0.0_f64, 0.0_f64);
@@ -648,6 +662,29 @@ fn shared_presets_have_realtime_processing_headroom() {
         assert!(
             seconds < 2.0,
             "DSP must leave at least half the real-time budget free"
+        );
+        let mut chain = Chain::new(&preset.chain).unwrap();
+        let mut output = [0.0; 256];
+        for block in input.chunks(256) {
+            chain.process(block, &mut output);
+        }
+        for _ in 0..2000 {
+            chain.process(&[0.0; 256], &mut output);
+        }
+        let start = std::time::Instant::now();
+        for _ in 0..750 {
+            chain.process(&[0.0; 256], &mut output);
+            std::hint::black_box(&output);
+        }
+        let seconds = start.elapsed().as_secs_f64();
+        println!(
+            "{}: four seconds of quiet tail processed in {seconds:.4} s",
+            preset.name
+        );
+        assert!(output.iter().all(|v| v.is_finite()));
+        assert!(
+            seconds < 2.0,
+            "quiet tails must also leave half the real-time budget free"
         );
     }
 }
