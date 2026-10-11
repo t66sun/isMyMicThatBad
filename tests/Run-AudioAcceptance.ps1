@@ -1,4 +1,4 @@
-param([string]$StimulusWavPath, [switch]$PhysicalMicrophone)
+param([string]$StimulusWavPath, [switch]$PhysicalMicrophone, [string]$AiRootPath)
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $artifacts = Join-Path $repoRoot 'research/audio-acceptance/artifacts'
@@ -21,6 +21,11 @@ if (-not $StimulusWavPath) {
     }
 }
 $StimulusWavPath = (Resolve-Path -LiteralPath $StimulusWavPath).Path
+if ($AiRootPath) {
+    if ($PhysicalMicrophone) { throw 'AI WAV calibration requires digital loopback input.' }
+    $AiRootPath = (Resolve-Path -LiteralPath $AiRootPath).Path
+    if (-not (Test-Path -LiteralPath "$AiRootPath/ready.json")) { throw 'Prepare the AI runtime before running AI acceptance.' }
+}
 $nativeExe = Join-Path $repoRoot 'src/app/src-tauri/target/release/ismymicthatbad.exe'
 if (-not (Test-Path -LiteralPath $nativeExe)) { throw 'Build the release application with scripts/Build.ps1 first.' }
 $devices = (& $nativeExe --devices | ConvertFrom-Json)
@@ -53,7 +58,7 @@ function Run-Test([string]$testName) {
     & cargo test --manifest-path $manifest --release --features custom-protocol --test hardware_latency $testName -- --ignored --exact --nocapture 2>&1 | ForEach-Object { $_.ToString() } | Tee-Object -FilePath $log -Append
     if ($LASTEXITCODE -ne 0) { throw "$testName failed; see $log" }
 }
-$variables = @('MIC_TEST_INPUT_ID','MIC_TEST_SPEAKER_ID','MIC_TEST_STIMULUS_WAV','MIC_TEST_PRESETS_FILE','MIC_TEST_SECONDS')
+$variables = @('MIC_TEST_INPUT_ID','MIC_TEST_SPEAKER_ID','MIC_TEST_STIMULUS_WAV','MIC_TEST_PRESETS_FILE','MIC_TEST_SECONDS','MIC_TEST_AI_ROOT')
 $saved = @{}
 foreach ($name in $variables) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }
 try {
@@ -76,6 +81,11 @@ try {
     $env:MIC_TEST_PRESETS_FILE = $presetsPath
     $env:MIC_TEST_SECONDS = '60'
     Run-Test 'female_preset_runs_without_underruns'
+    if ($AiRootPath) {
+        $env:MIC_TEST_AI_ROOT = $AiRootPath
+        Run-Test 'rvc_wav_reaches_cable_and_survives_live_edits'
+        Run-Test 'rvc_wav_loopback_latency_is_measured'
+    }
     Write-Host "Audio acceptance passed. Log: $log"
 } finally {
     foreach ($name in $variables) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }

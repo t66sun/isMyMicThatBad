@@ -1,6 +1,6 @@
 use crate::{
     clock::{Converter, Drift},
-    dsp::{Chain, FilterConfig, BLOCK, RATE},
+    dsp::{self, Chain, FilterConfig, BLOCK, RATE},
     graph::{Graph, Runner},
     settings::Session,
 };
@@ -10,6 +10,7 @@ use cpal::{
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     mpsc::{sync_channel, Receiver, SyncSender, TrySendError},
@@ -391,17 +392,22 @@ fn retire(graph: Graph, sender: &SyncSender<Graph>) -> Option<Graph> {
         Err(TrySendError::Full(graph)) | Err(TrySendError::Disconnected(graph)) => Some(graph),
     }
 }
+enum Update {
+    Graph(Graph),
+    Params(Vec<FilterConfig>),
+}
 struct Runtime {
     capture: Stream,
     output: Stream,
     monitor: Option<Stream>,
     worker: Option<JoinHandle<()>>,
     stats: Arc<Stats>,
-    pending: Arc<Mutex<Option<Graph>>>,
+    pending: Arc<Mutex<Option<Update>>>,
     retired: Receiver<Graph>,
+    configs: Vec<FilterConfig>,
 }
 impl Runtime {
-    fn new(settings: &Session) -> Result<Self, String> {
+    fn new(settings: &Session, ai_root: Option<&Path>) -> Result<Self, String> {
         settings.validate()?;
         let input = find(&settings.input_id, true)?;
         let main = find(&settings.output_id, false)?;
@@ -475,8 +481,8 @@ impl Runtime {
                 }
                 None
             };
-        let mut runner = Runner::new(Graph::new(Chain::new(&settings.chain)?));
-        let pending = Arc::new(Mutex::new(None::<Graph>));
+        let mut runner = Runner::new(Graph::new(Chain::with_ai(&settings.chain, ai_root)?));
+        let pending = Arc::new(Mutex::new(None::<Update>));
         let changes = Arc::clone(&pending);
         let (retired_sender, retired) = sync_channel(32);
         let worker_stats = Arc::clone(&stats);
@@ -504,10 +510,15 @@ impl Runtime {
                     }
                     if deferred.is_none() && !runner.transitioning() {
                         if let Ok(mut slot) = changes.try_lock() {
-                            if let Some(graph) = slot.take() {
-                                deferred = runner
-                                    .submit(graph)
-                                    .and_then(|g| retire(g, &retired_sender));
+                            if let Some(update) = slot.take() {
+                                match update {
+                                    Update::Graph(graph) => {
+                                        deferred = runner
+                                            .submit(graph)
+                                            .and_then(|g| retire(g, &retired_sender))
+                                    }
+                                    Update::Params(configs) => runner.update_configs(&configs),
+                                }
                             }
                         }
                     }
@@ -549,6 +560,10 @@ impl Runtime {
                     if let Some(graph) = runner.process(&input, &mut processed) {
                         deferred = retire(graph, &retired_sender);
                     }
+                    if let Some(error) = runner.error() {
+                        worker_stats.fail(error, false);
+                        break;
+                    }
                     let peak = processed.iter().fold(0.0_f32, |a, x| a.max(x.abs()));
                     worker_stats
                         .output_peak
@@ -578,6 +593,7 @@ impl Runtime {
             stats,
             pending,
             retired,
+            configs: settings.chain.clone(),
         };
         runtime.capture.play().map_err(|e| e.to_string())?;
         let deadline = Instant::now() + Duration::from_millis(750);
@@ -641,14 +657,21 @@ impl Drop for Runtime {
 pub struct Controller {
     runtime: Option<Runtime>,
     last_error: Option<String>,
+    ai_root: Option<PathBuf>,
 }
 impl Controller {
+    pub fn with_ai(root: PathBuf) -> Self {
+        Self {
+            ai_root: Some(root),
+            ..Self::default()
+        }
+    }
     pub fn start(&mut self, settings: &Session) -> Result<(), String> {
         if self.runtime.is_some() {
             return Err("处理已经运行".into());
         }
         self.last_error = None;
-        match Runtime::new(settings) {
+        match Runtime::new(settings, self.ai_root.as_deref()) {
             Ok(runtime) => {
                 self.runtime = Some(runtime);
                 Ok(())
@@ -664,9 +687,35 @@ impl Controller {
         self.last_error = None;
     }
     pub fn set_chain(&mut self, filters: &[FilterConfig]) -> Result<(), String> {
-        let graph = Graph::new(Chain::new(filters)?);
-        if let Some(runtime) = &self.runtime {
-            *runtime.pending.lock().map_err(|_| "音频控制状态不可用")? = Some(graph);
+        dsp::validate(filters)?;
+        if let Some(runtime) = &mut self.runtime {
+            let old_model = runtime
+                .configs
+                .iter()
+                .find(|c| c.kind == "rvc")
+                .map(|c| &c.model);
+            let new_model = filters.iter().find(|c| c.kind == "rvc").map(|c| &c.model);
+            if old_model.is_some() && new_model.is_some() && old_model != new_model {
+                return Err("切换 AI 模型前请先停止处理".into());
+            }
+            if dsp::same_structure(&runtime.configs, filters) {
+                let mut pending = runtime.pending.lock().map_err(|_| "音频控制状态不可用")?;
+                if let Some(Update::Graph(graph)) = pending.as_mut() {
+                    graph.chain.update_configs(filters);
+                } else {
+                    *pending = Some(Update::Params(filters.to_vec()));
+                }
+            } else {
+                let chain = Chain::with_ai(filters, self.ai_root.as_deref()).map_err(|error| {
+                    if old_model.is_some() || new_model.is_some() {
+                        runtime.stats.fail(error.clone(), false);
+                    }
+                    error
+                })?;
+                *runtime.pending.lock().map_err(|_| "音频控制状态不可用")? =
+                    Some(Update::Graph(Graph::new(chain)));
+            }
+            runtime.configs = filters.to_vec();
         }
         Ok(())
     }

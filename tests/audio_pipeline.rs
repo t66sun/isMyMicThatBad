@@ -1,10 +1,11 @@
-use mic_engine::dsp::{Chain, FilterConfig};
+use mic_engine::dsp::{validate, AiModel, Chain, FilterConfig};
 use std::collections::BTreeMap;
 fn config(kind: &str, params: &[(&str, f32)]) -> FilterConfig {
     FilterConfig {
         id: kind.into(),
         kind: kind.into(),
         enabled: true,
+        model: None,
         params: params
             .iter()
             .map(|(k, v)| (k.to_string(), *v))
@@ -201,9 +202,14 @@ fn settings_roundtrip_and_corruption_preserve_user_data() {
         .as_nanos();
     let directory = std::env::temp_dir().join(format!("mic-settings-test-{nonce}"));
     let store = Store::new(directory.clone());
+    let mut rvc = defaults("rvc", &[("pitch", 8.0), ("formant", 1.5), ("index", 65.0), ("rms", 35.0)]);
+    rvc.model = Some(AiModel {
+        path: "C:\\voices\\voice.pth".into(),
+        index: "C:\\voices\\voice.index".into(),
+    });
     let session = Session {
         close_to_tray: true,
-        chain: vec![config("gain", &[("gain_db", -6.0)])],
+        chain: vec![config("gain", &[("gain_db", -6.0)]), rvc],
         ..Session::default()
     };
     store.save(&session).unwrap();
@@ -231,6 +237,60 @@ fn settings_roundtrip_and_corruption_preserve_user_data() {
             .ok()
             .as_deref()
             == Some("broken original data")));
+}
+
+#[test]
+fn rvc_validation_checks_model_paths_and_one_card_without_loading_a_model() {
+    let default = defaults("rvc", &[]);
+    assert!(validate(&[default.clone()]).is_ok(), "no explicit model uses the prepared default voice");
+    let stored = serde_json::to_value(&default).unwrap();
+    assert!(stored.get("model").is_none(), "an absent model stays omitted");
+    assert_eq!(serde_json::from_value::<FilterConfig>(stored).unwrap().model, None);
+    assert_eq!(
+        serde_json::from_value::<AiModel>(serde_json::json!({"path":"voice.pth"}))
+            .unwrap()
+            .index,
+        ""
+    );
+
+    let with_model = |path: String, index: String| {
+        let mut config = default.clone();
+        config.model = Some(AiModel { path, index });
+        config
+    };
+    assert!(validate(&[with_model("voice.pth".into(), "".into())]).is_ok());
+    assert!(validate(&[with_model(
+        format!("{}.pth", "x".repeat(32763)),
+        format!("{}.index", "x".repeat(32761)),
+    )])
+    .is_ok());
+    assert!(validate(&[with_model(
+        format!("{}.pth", "声".repeat(32763)),
+        format!("{}.index", "声".repeat(32761)),
+    )])
+    .is_ok());
+    for (path, index) in [
+        (String::new(), String::new()),
+        ("voice.pt".into(), String::new()),
+        ("voice\0.pth".into(), String::new()),
+        ("voice.pth".into(), "voice.idx".into()),
+        ("voice.pth".into(), "voice\0.index".into()),
+        (format!("{}.pth", "x".repeat(32764)), String::new()),
+        ("voice.pth".into(), format!("{}.index", "x".repeat(32762))),
+    ] {
+        assert!(validate(&[with_model(path, index)]).is_err());
+    }
+
+    let mut second = default.clone();
+    second.id = "second-rvc".into();
+    second.enabled = false;
+    assert!(validate(&[default.clone(), second]).is_err());
+    let mut ordinary = defaults("gain", &[]);
+    ordinary.model = Some(AiModel {
+        path: "voice.pth".into(),
+        index: String::new(),
+    });
+    assert!(validate(&[ordinary]).is_err());
 }
 
 #[test]

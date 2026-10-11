@@ -2,15 +2,17 @@ import definitionsJson from './filters.json';
 export type FilterType = string;
 export interface Parameter { key: string; label: string; unit: string; min: number; max: number; step: number; default: number }
 export interface FilterDefinition { type: FilterType; name: string; description: string; color: string; parameters: Parameter[]; summaryKeys?: string[] }
-export interface FilterInstance { id: string; type: FilterType; enabled: boolean; params: Record<string, number> }
+export interface AiModel { path: string; index: string }
+export interface FilterInstance { id: string; type: FilterType; enabled: boolean; params: Record<string, number>; model?: AiModel }
 export interface Preset { id: string; name: string; chain: FilterInstance[] }
 export interface Session { schemaVersion: 1; inputId: string; outputId: string; monitorId: string; monitoring: boolean; closeToTray: boolean; bufferMs: number; chain: FilterInstance[]; presets: Preset[] }
 export const definitions = definitionsJson as FilterDefinition[];
 export function createFilter(definition: FilterDefinition): FilterInstance {
   return {id: crypto.randomUUID(), type: definition.type, enabled: true, params: Object.fromEntries(definition.parameters.map(p => [p.key, p.default]))};
 }
-export function cloneChain(chain: FilterInstance[]): FilterInstance[] { return chain.map(x => ({...x, id: crypto.randomUUID(), params: {...x.params}})); }
+export function cloneChain(chain: FilterInstance[]): FilterInstance[] { return chain.map(x => ({...x, id: crypto.randomUUID(), params: {...x.params}, ...(x.model ? {model: {...x.model}} : {})})); }
 export function insertFilter(chain: FilterInstance[], definition: FilterDefinition, index: number): FilterInstance[] {
+  if (definition.type === 'rvc' && chain.some(x => x.type === 'rvc')) return chain;
   const next = [...chain]; next.splice(Math.max(0, Math.min(index, next.length)), 0, createFilter(definition)); return next;
 }
 export function moveFilter(chain: FilterInstance[], id: string, index: number): FilterInstance[] {
@@ -19,6 +21,7 @@ export function moveFilter(chain: FilterInstance[], id: string, index: number): 
 }
 export function duplicateFilter(chain: FilterInstance[], id: string): FilterInstance[] {
   const index = chain.findIndex(x => x.id === id); if (index < 0) return chain;
+  if (chain[index].type === 'rvc') return chain;
   const next = [...chain]; next.splice(index + 1, 0, ...cloneChain([chain[index]])); return next;
 }
 export function removeFilter(chain: FilterInstance[], id: string): FilterInstance[] { return chain.filter(x => x.id !== id); }
@@ -53,6 +56,7 @@ export const emptySession: Session = {schemaVersion:1,inputId:'',outputId:'',mon
 function validateChain(value: unknown): FilterInstance[] {
   if (!Array.isArray(value) || value.length > 64) throw new Error('滤镜数量应在 0–64 之间');
   const ids = new Set<string>();
+  if (value.filter(v => v?.type === 'rvc').length > 1) throw new Error('每条管线最多支持一张 AI 卡片');
   return value.map(v => {
     if (!v || typeof v !== 'object' || typeof v.id !== 'string' || !v.id || ids.has(v.id) || typeof v.enabled !== 'boolean') throw new Error('滤镜实例格式无效');
     ids.add(v.id);
@@ -63,7 +67,14 @@ function validateChain(value: unknown): FilterInstance[] {
       const n = legacyClip ? 0 : v.params?.[p.key]; if (typeof n !== 'number' || !Number.isFinite(n) || n < p.min || n > p.max) throw new Error('滤镜参数超出范围');
       params[p.key] = n;
     }
-    return {id:v.id,type:definition.type,enabled:v.enabled,params};
+    let model: AiModel | undefined;
+    if (v.model !== undefined && v.model !== null) {
+      if (definition.type !== 'rvc' || typeof v.model.path !== 'string' || !v.model.path.toLowerCase().endsWith('.pth')
+        || typeof v.model.index !== 'string' || (v.model.index && !v.model.index.toLowerCase().endsWith('.index'))
+        || [v.model.path,v.model.index].some(p => p.length > 32767 || p.includes('\0'))) throw new Error('AI 模型路径无效');
+      model = {path:v.model.path,index:v.model.index};
+    }
+    return {id:v.id,type:definition.type,enabled:v.enabled,params,...(model ? {model} : {})};
   });
 }
 export function validateSession(value: unknown): Session {

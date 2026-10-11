@@ -13,8 +13,37 @@ try {
  const result=await editorFlow(page);
  await historyFlow(page);
  await raw(page);
- assert.equal(catalog.length,13);
- assert.equal(await page.locator('.library-card').count(),13);
+ assert.equal(catalog.length,14);
+ assert.equal(await page.locator('.library-card').count(),14);
+ await page.getByRole('button',{name:'添加AI变声 (RVC)',exact:true}).click();await settle(page);
+ const aiCard=page.locator('.effect-card[aria-label="AI变声 (RVC)滤镜"]');
+ assert.equal(await aiCard.count(),1);
+ const assertAiCardTextFits=async bypassed=>{
+   const geometry=await aiCard.evaluate(card=>{
+     const cardRect=card.getBoundingClientRect();
+     const name=card.querySelector('.card-name'),values=card.querySelector('.card-values');
+     if(!name||!values)throw Error('RVC card title or parameter summary is missing');
+     return {
+       lineHeight:Number.parseFloat(getComputedStyle(name).lineHeight),
+       nameHeight:name.getBoundingClientRect().height,
+       bypassVisible:Boolean(card.querySelector('.bypass-label')),
+       texts:Array.from(card.querySelectorAll('.card-name,.card-values,.bypass-label')).map(element=>({
+         selector:'.'+element.className,
+         bottom:element.getBoundingClientRect().bottom,
+       })),
+       cardBottom:cardRect.bottom,
+     };
+   });
+   assert.ok(geometry.nameHeight>=geometry.lineHeight-1,'RVC title has room for at least one CSS line');
+   assert.equal(geometry.bypassVisible,bypassed,'RVC bypass label matches card state');
+   for(const text of geometry.texts)assert.ok(text.bottom<=geometry.cardBottom+1,`${text.selector} stays inside the RVC card`);
+ };
+ await assertAiCardTextFits(false);
+ await page.getByRole('button',{name:'旁路AI变声 (RVC)',exact:true}).click();await settle(page);
+ await assertAiCardTextFits(true);
+ await page.getByRole('button',{name:'启用AI变声 (RVC)',exact:true}).click();await settle(page);
+ await raw(page);
+ await page.locator('#filter-library').evaluate(n=>{n.scrollLeft=0;});await settle(page);
  await page.getByRole('button',{name:'向后浏览滤镜库',exact:true}).click();
  await page.waitForTimeout(250);
  assert.ok(await page.locator('#filter-library').evaluate(n=>n.scrollLeft>0));

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use mic_engine::{
+    ai::{Preparation, PreparationStatus},
     audio::{self, Controller, DeviceInfo, Status},
     dsp::FilterConfig,
     settings::{Loaded, Session, Store},
@@ -21,9 +22,39 @@ struct NativeState {
     store: Mutex<Store>,
     close_to_tray: AtomicBool,
     processing: CheckMenuItem<tauri::Wry>,
+    ai: Mutex<Preparation>,
 }
 fn poisoned() -> String {
     "应用状态不可用，请重新启动".into()
+}
+#[tauri::command]
+async fn ai_status(state: State<'_, NativeState>) -> Result<PreparationStatus, String> {
+    state.ai.lock().map_err(|_| poisoned())?.status()
+}
+#[tauri::command]
+async fn prepare_ai(state: State<'_, NativeState>) -> Result<(), String> {
+    if state.audio.lock().map_err(|_| poisoned())?.status().running {
+        return Err("准备 AI 环境前请先停止处理".into());
+    }
+    state.ai.lock().map_err(|_| poisoned())?.start()
+}
+#[tauri::command]
+async fn choose_ai_model(
+    state: State<'_, NativeState>,
+    index: bool,
+) -> Result<Option<String>, String> {
+    if state.audio.lock().map_err(|_| poisoned())?.status().running {
+        return Err("切换 AI 模型前请先停止处理".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::os::windows::process::CommandExt;
+        let filter = if index { "RVC index (*.index)|*.index" } else { "RVC model (*.pth)|*.pth" };
+        let script = format!("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); Add-Type -AssemblyName System.Windows.Forms; $dialog=[Windows.Forms.OpenFileDialog]::new(); $dialog.Filter='{filter}'; $dialog.CheckFileExists=$true; try {{ if ($dialog.ShowDialog() -eq 'OK') {{ ConvertTo-Json -InputObject $dialog.FileName -Compress }} else {{ 'null' }} }} finally {{ $dialog.Dispose() }}");
+        let result = std::process::Command::new("powershell.exe").args(["-NoProfile","-STA","-Command",&script])
+            .creation_flags(0x08000000).output().map_err(|e| e.to_string())?;
+        if !result.status.success() { return Err("无法打开 AI 模型文件选择窗口".into()); }
+        serde_json::from_slice::<Option<String>>(&result.stdout).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn list_devices() -> Result<Vec<DeviceInfo>, String> {
@@ -236,11 +267,13 @@ fn main() {
     }
     tauri::Builder::default()
         .setup(|app| {
-            let store = Store::new(directory(app)?);
+            let data = directory(app)?;
+            let store = Store::new(data.clone());
             let processing =
                 CheckMenuItem::with_id(app, "processing", "开启处理", true, false, None::<&str>)?;
             app.manage(NativeState {
-                audio: Mutex::new(Controller::default()),
+                audio: Mutex::new(Controller::with_ai(data.join("ai"))),
+                ai: Mutex::new(Preparation::new(data.join("ai"))),
                 store: Mutex::new(store),
                 close_to_tray: AtomicBool::new(false),
                 processing: processing.clone(),
@@ -313,6 +346,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             list_devices,
+            ai_status,
+            prepare_ai,
+            choose_ai_model,
             load_session,
             save_session,
             set_chain,

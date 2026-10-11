@@ -349,6 +349,19 @@
     ]
   },
   {
+    "type": "rvc",
+    "name": "AI变声 (RVC)",
+    "description": "本机离线转换到导入的 RVC 音色。音色优先，算法延迟约 520 ms；可在前后排列传统滤镜。每条管线最多一张 AI 卡片。",
+    "color": "#8e99a7",
+    "summaryKeys": ["pitch", "index"],
+    "parameters": [
+      { "key": "pitch", "label": "AI 音高", "unit": "半音", "min": -24, "max": 24, "step": 1, "default": 0 },
+      { "key": "formant", "label": "AI 共振峰", "unit": "半音", "min": -12, "max": 12, "step": 0.5, "default": 0 },
+      { "key": "index", "label": "索引强度", "unit": "%", "min": 0, "max": 100, "step": 1, "default": 50 },
+      { "key": "rms", "label": "音量包络", "unit": "%", "min": 0, "max": 100, "step": 1, "default": 50 }
+    ]
+  },
+  {
     "type": "reverb",
     "name": "混响",
     "description": "加入柔和空间尾音，保留可调的原音比例。",

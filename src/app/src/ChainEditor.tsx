@@ -207,7 +207,7 @@ export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSele
             onClick={() => scrollLibrary(1)}><ArrowRight size={17} aria-hidden="true" /></button>
         </div>
       </div>
-      <div ref={libraryViewport} id="filter-library" className="library-list" role="group" aria-label="全部滤镜">{definitions.map(definition => <LibraryItem key={definition.type} definition={definition} disabled={chain.length >= 64}
+      <div ref={libraryViewport} id="filter-library" className="library-list" role="group" aria-label="全部滤镜">{definitions.map(definition => <LibraryItem key={definition.type} definition={definition} disabled={chain.length >= 64 || definition.type === 'rvc' && chain.some(node => node.type === 'rvc')}
         onAdd={() => { if (suppressClick.current || dragRef.current) return; onAdd(definition, insertAt ?? chain.length); setInsertAt(null); }} />)}</div>
     </section>
     <section className="chain-panel" aria-label="滤镜管线">
@@ -232,7 +232,7 @@ export const ChainEditor = memo(function ChainEditor({ chain, selectedId, onSele
             {index < preview.length ? <>
               <EffectCard node={preview[index]} definition={definitions.find(d => d.type === preview[index].type)!} index={index + (drag?.library && drag.over && drag.index <= index ? 1 : 0)}
                 selected={selectedId === preview[index].id} dragging={Boolean(drag)} reduced={reduced} last={index === preview.length - 1}
-                sourceId={drag && !drag.library ? drag.node.id : null} canDuplicate={chain.length < 64} onSelect={onSelect} onAction={onAction} />
+                sourceId={drag && !drag.library ? drag.node.id : null} canDuplicate={chain.length < 64 && preview[index].type !== 'rvc'} onSelect={onSelect} onAction={onAction} />
               <InsertionSlot index={index + 1} active={insertAt === index + 1} onPick={() => setInsertAt(index + 1)} />
             </> : null}
           </div>)}

@@ -1,5 +1,5 @@
-use crate::dsp::{Chain, Smooth, BLOCK, MAX_FILTERS, MAX_FILTER_LATENCY};
-const HISTORY: usize = MAX_FILTERS * MAX_FILTER_LATENCY + 1;
+use crate::dsp::{Chain, FilterConfig, Smooth, BLOCK, MAX_CHAIN_LATENCY};
+const HISTORY: usize = MAX_CHAIN_LATENCY + 1;
 struct Padding {
     samples: Box<[f32]>,
     cursor: usize,
@@ -24,6 +24,7 @@ mod tests {
                         id: "delay".into(),
                         kind: "frequency".into(),
                         enabled: true,
+                        model: None,
                         params: [("shift_hz".into(), 0.0)].into_iter().collect(),
                     }])
                     .unwrap(),
@@ -126,6 +127,15 @@ impl Runner {
     }
     pub fn set_bypassed(&mut self, bypassed: bool) {
         self.wet.set(if bypassed { 0.0 } else { 1.0 });
+    }
+    pub fn error(&self) -> Option<String> {
+        self.current
+            .chain
+            .error()
+            .or_else(|| self.next.as_ref().and_then(|graph| graph.chain.error()))
+    }
+    pub fn update_configs(&mut self, configs: &[FilterConfig]) {
+        self.current.chain.update_configs(configs);
     }
     pub fn submit(&mut self, mut graph: Graph) -> Option<Graph> {
         if self.current.chain.same_structure(&graph.chain) {

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Square, Settings, ChevronDown, X, RefreshCw, Save, CheckCircle2, AlertCircle, Cable, Trash2, Plus } from 'lucide-react';
 import * as api from './api';
-import { definitions, builtins, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, cloneChain, type Session, type FilterInstance, type FilterDefinition } from './model';
+import { definitions, builtins, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, cloneChain, type Session, type FilterInstance, type FilterDefinition, type AiModel } from './model';
 import { ChainEditor, type CardAction } from './ChainEditor';
 import { FilterIcon, Menu, ParameterControl, WindowControls } from './ui';
 import appIcon from './assets/app-icon.svg';
 import { listen } from '@tauri-apps/api/event';
 import { version } from '../package.json';
 import { editChain, undoChain, redoChain, emptyHistory } from './history';
+import { AiControls } from './AiControls';
 
 function Meter({ label, value }: { label: string; value: number }) {
   return <div className="meter"><div><span>{label}</span><span>{value > 0 ? (20 * Math.log10(value)).toFixed(1) + ' dB' : '−∞ dB'}</span></div>
@@ -21,6 +22,7 @@ export default function App() {
   const [devices, setDevices] = useState<api.Device[]>([]);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<api.Status>(api.stopped);
+  const [aiStatus, setAiStatus] = useState<api.AiStatus>(api.aiUnavailable);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -33,6 +35,7 @@ export default function App() {
   const presetDialog = useRef<HTMLDialogElement>(null);
   const selected = session.chain.find(node => node.id === selectedId) ?? session.chain[0] ?? null;
   const definition = selected ? definitions.find(d => d.type === selected.type)! : null;
+  const hasAi = session.chain.some(node => node.type === 'rvc');
 
   useEffect(() => {
     if (!api.native) return;
@@ -42,18 +45,26 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.load(), api.devices()]).then(([saved, list]) => {
+    Promise.all([api.load(), api.devices(), api.aiStatus()]).then(([saved, list, ai]) => {
       if (!active) return;
       const restored = { ...saved.session };
       if (!restored.inputId) restored.inputId = list.find(d => d.input && d.isDefault && !d.name.includes('CABLE'))?.id ?? list.find(d => d.input && !d.name.includes('CABLE'))?.id ?? '';
       if (!restored.outputId) restored.outputId = list.find(d => !d.input && d.name.includes('CABLE Input'))?.id ?? '';
       if (!restored.monitorId) restored.monitorId = list.find(d => !d.input && d.isDefault && !d.name.includes('CABLE'))?.id ?? '';
-      setDevices(list); setSession(restored); setSelectedId(restored.chain[0]?.id ?? null);
+      setDevices(list); setAiStatus(ai); setSession(restored); setSelectedId(restored.chain[0]?.id ?? null);
       setHistory({ ...emptyHistory, present: restored.chain });
       setNotice(saved.warning ?? ''); setReady(true);
     }).catch(error => { if (active) setError(String(error)); });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!api.native || (!hasAi && !aiStatus.preparing)) return;
+    let active = true;
+    const timer = setInterval(() => api.aiStatus().then(next => { if (active) setAiStatus(next); })
+      .catch(error => { if (active) setAiStatus(previous => ({...previous,error:String(error)})); }), 1000);
+    return () => { active = false; clearInterval(timer); };
+  }, [hasAi, aiStatus.preparing]);
   useEffect(() => {
     if (!ready) return;
     let active = true;
@@ -82,18 +93,32 @@ export default function App() {
     setSelectedId(id);
     if (id && focus) requestAnimationFrame(() => document.getElementById('select-' + id)?.focus({ preventScroll: true }));
   }, []);
+  const canChangeChain = useCallback((chain: FilterInstance[]) => {
+    const current = session.chain.find(node => node.type === 'rvc');
+    const next = chain.find(node => node.type === 'rvc');
+    if ((status.running || busy) && current && next && (current.model?.path !== next.model?.path || current.model?.index !== next.model?.index)) {
+      setError('更换 AI 模型或索引前，请等待当前操作完成，并先停止处理。');
+      return false;
+    }
+    return true;
+  }, [session.chain, status.running, busy]);
   const changeChain = useCallback((chain: FilterInstance[], group: string | null = null) => {
+    if (!canChangeChain(chain)) return;
     setError('');
     setHistory(previous => editChain(previous, chain, group));
     setAnnouncement('声音管线已更新，共 ' + chain.length + ' 个滤镜。');
-  }, []);
+  }, [canChangeChain]);
   const endEdit = useCallback(() => setHistory(previous => previous.group === null ? previous : { ...previous, group: null }), []);
   const undo = useCallback(() => {
-    setError(''); setHistory(undoChain); setAnnouncement('已撤销声音管线修改。');
-  }, []);
+    const next = undoChain(history);
+    if (!canChangeChain(next.present)) return;
+    setError(''); setHistory(next); setAnnouncement('已撤销声音管线修改。');
+  }, [history, canChangeChain]);
   const redo = useCallback(() => {
-    setError(''); setHistory(redoChain); setAnnouncement('已重做声音管线修改。');
-  }, []);
+    const next = redoChain(history);
+    if (!canChangeChain(next.present)) return;
+    setError(''); setHistory(next); setAnnouncement('已重做声音管线修改。');
+  }, [history, canChangeChain]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (!ready || dragging || event.altKey || !(event.ctrlKey || event.metaKey) || document.querySelector('dialog[open]')
@@ -107,6 +132,7 @@ export default function App() {
   }, [ready, dragging, history.past.length, history.future.length, undo, redo]);
   const add = useCallback((definition: FilterDefinition, index: number) => {
     if (session.chain.length >= 64) { setNotice('最多可以加入 64 个滤镜。'); return; }
+    if (definition.type === 'rvc' && session.chain.some(node => node.type === 'rvc')) { setNotice('每条管线最多支持一张 AI 卡片。'); return; }
     const chain = insertFilter(session.chain, definition, index);
     changeChain(chain);
     select(chain[Math.max(0, Math.min(index, chain.length - 1))].id, true);
@@ -117,6 +143,7 @@ export default function App() {
     let chain = session.chain;
     if (action === 'bypass') chain = chain.map(node => node.id === id ? { ...node, enabled: !node.enabled } : node);
     else if (action === 'duplicate') {
+      if (chain[index].type === 'rvc') return;
       if (chain.length >= 64) { setNotice('最多可以加入 64 个滤镜。'); return; }
       chain = duplicateFilter(chain, id);
       select(chain[index + 1].id, true);
@@ -137,11 +164,12 @@ export default function App() {
   const presetLabel = useMemo(() => {
     const matches = [...builtins, ...session.presets].find(p => p.chain.length === session.chain.length && p.chain.every((node, index) => {
       const other = session.chain[index];
-      return node.type === other.type && node.enabled === other.enabled && Object.keys(node.params).every(key => node.params[key] === other.params[key]);
+      return node.type === other.type && node.enabled === other.enabled && node.model?.path === other.model?.path && node.model?.index === other.model?.index && Object.keys(node.params).every(key => node.params[key] === other.params[key]);
     }));
     return matches?.name ?? '自定义';
   }, [session.chain, session.presets]);
   const toggleAudio = async () => {
+    if (!status.running && hasAi && (!aiStatus.ready || aiStatus.preparing)) { setError('请先准备 AI 环境，再开始处理。'); return; }
     setBusy(true); setError('');
     try { if (status.running) await api.stop(); else await api.start(session); setStatus(await api.status()); }
     catch (error) { setError(String(error)); }
@@ -167,6 +195,37 @@ export default function App() {
   const install = async () => {
     setBusy(true);
     try { setNotice(await api.installCable()); } catch (error) { setError(String(error)); } finally { setBusy(false); }
+  };
+  const prepareAi = async () => {
+    if (status.running || aiStatus.preparing) return;
+    setAiStatus(previous => ({...previous,preparing:true,error:null}));
+    try { await api.prepareAi(); setAiStatus(await api.aiStatus()); }
+    catch (error) { setAiStatus(previous => ({...previous,preparing:false,error:String(error)})); }
+  };
+  const changeAiModel = (id: string, model?: AiModel) => {
+    if (status.running || busy) return;
+    setError('');
+    setHistory(previous => editChain(previous, previous.present.map(node => {
+      if (node.id !== id || node.type !== 'rvc') return node;
+      const {model: _oldModel, ...rest} = node;
+      return {...rest,...(model ? {model} : {})};
+    })));
+    setAnnouncement('AI 目标音色已更新。');
+  };
+  const chooseAiModel = async (index: boolean) => {
+    if (!selected || selected.type !== 'rvc' || status.running || busy || aiStatus.preparing) return;
+    const id = selected.id;
+    const modelPath = selected.model?.path ?? aiStatus.modelPath;
+    setBusy(true); setError('');
+    try {
+      const path = await api.chooseAiModel(index);
+      if (!path) return;
+      if (path.length > 32767 || path.includes('\0') || !path.toLowerCase().endsWith(index ? '.index' : '.pth') || index && !modelPath) throw new Error('请选择有效的 ' + (index ? '.index 索引' : '.pth 模型') + '文件。');
+      const model = index ? {path:modelPath,index:path} : {path,index:''};
+      setHistory(previous => editChain(previous, previous.present.map(node => node.id === id && node.type === 'rvc' ? {...node,model} : node)));
+      setAnnouncement('AI 目标音色已更新。');
+    } catch (error) { setError('导入 AI 模型失败：' + String(error)); }
+    finally { setBusy(false); }
   };
   const savePreset = () => {
     if (!presetName.trim() || session.presets.length >= 100) return;
@@ -201,7 +260,7 @@ export default function App() {
         <span>{inputName.startsWith('Microphone') ? '麦克风' : inputName}</span><span aria-hidden="true">→</span><span>{outputName.startsWith('CABLE Input') ? 'CABLE Input' : outputName}</span>
       </button>
       <span className="status-label">{status.running ? status.bypassed ? '原音对比中' : '正在处理' : '已停止'}</span>
-      <button className="transport" disabled={busy || !ready || !api.native || (!status.running && (!session.inputId || !session.outputId))} onClick={toggleAudio}>
+      <button className="transport" title={!status.running && hasAi && (!aiStatus.ready || aiStatus.preparing) ? '请先在 AI 卡片中准备环境' : undefined} disabled={busy || !ready || !api.native || (!status.running && (!session.inputId || !session.outputId || hasAi && (!aiStatus.ready || aiStatus.preparing)))} onClick={toggleAudio}>
         {status.running ? <Square size={15} aria-hidden="true" /> : <Play size={16} fill="currentColor" aria-hidden="true" />}
         {busy ? '请稍候' : status.running ? '停止处理' : '开始处理'}
       </button>
@@ -221,7 +280,9 @@ export default function App() {
           <div className="inspector-identity"><div className="inspector-icon glass"><FilterIcon type={selected.type} size={34} /></div>
             <div><h2>{definition.name}</h2><span>{selected.enabled ? '参数' : '已旁路 · 参数保留'}</span></div>
           </div>
-          <fieldset className={'inspector-fields' + (definition.parameters.length > 1 ? ' multiple-parameters' : '')} disabled={dragging}><legend className="sr-only">{definition.name}参数</legend>
+          <fieldset className={'inspector-fields' + (definition.parameters.length > 1 ? ' multiple-parameters' : '')} disabled={dragging || busy}><legend className="sr-only">{definition.name}参数</legend>
+            {selected.type === 'rvc' ? <AiControls node={selected} status={aiStatus} locked={dragging || busy} running={status.running}
+              onPrepare={prepareAi} onChoose={chooseAiModel} onModel={model => changeAiModel(selected.id, model)} /> : null}
             {definition.parameters.map(parameter => <ParameterControl key={selected.id + parameter.key} node={selected} parameter={parameter}
               onChange={(key, value) => changeChain(session.chain.map(node => node.id === selected.id ? { ...node, params: { ...node.params, [key]: value } } : node), selected.id + ':' + key)} onChangeEnd={endEdit} />)}
             <p className="inspector-description">{definition.description}</p>

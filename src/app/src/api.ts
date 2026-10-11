@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { emptySession, validateSession, type Session, type FilterInstance } from './model';
 export interface Device { id: string; name: string; input: boolean; isDefault: boolean }
 export interface Status { running: boolean; bypassed: boolean; monitoring: boolean; inputPeak: number; outputPeak: number; underruns: number; overflows: number; deviceXruns: number; error: string | null; sampleRate: number }
+export interface AiStatus { ready: boolean; preparing: boolean; error: string | null; modelPath: string; indexPath: string }
+export const aiUnavailable: AiStatus = {ready:false,preparing:false,error:null,modelPath:'',indexPath:''};
 export const native = '__TAURI_INTERNALS__' in window;
 export const stopped: Status = {running:false,bypassed:false,monitoring:false,inputPeak:0,outputPeak:0,underruns:0,overflows:0,deviceXruns:0,error:null,sampleRate:48000};
 export async function load(): Promise<{session:Session; warning:string|null}> {
@@ -23,3 +25,6 @@ export async function status(): Promise<Status> { return native ? invoke('get_st
 export async function installCable(): Promise<string> { return invoke('install_cable'); }
 
 export async function openCableSite() { if(native) await invoke('open_cable_site'); }
+export async function aiStatus(): Promise<AiStatus> { return native ? invoke('ai_status') : {...aiUnavailable}; }
+export async function prepareAi() { if (!native) throw new Error('请在桌面应用中准备 AI 环境。'); await invoke('prepare_ai'); }
+export async function chooseAiModel(index: boolean): Promise<string | null> { return native ? invoke('choose_ai_model',{index}) : null; }

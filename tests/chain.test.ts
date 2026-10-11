@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFilter, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, validateSession, definitions, builtins } from '../src/app/src/model.ts';
+import { createFilter, cloneChain, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, validateSession, definitions, builtins } from '../src/app/src/model.ts';
 import { editChain, undoChain, redoChain, emptyHistory } from '../src/app/src/history.ts';
 test('insertion, reorder and duplication preserve independent instance identity', () => {
   let chain = insertFilter([], definitions[0], 0);
@@ -16,8 +16,8 @@ test('insertion, reorder and duplication preserve independent instance identity'
   assert.equal(chain[1].params.cutoff, 80);
   assert.equal(removeFilter(chain, id).length, 2);
 });
-test('all thirteen filters and seven presets have complete valid independent metadata', () => {
-  assert.equal(definitions.length, 13); assert.equal(builtins.length, 7);
+test('all fourteen filters and seven presets have complete valid independent metadata', () => {
+  assert.equal(definitions.length, 14); assert.equal(builtins.length, 7);
   assert.equal(new Set(definitions.map(d => d.type)).size, definitions.length);
   for (const definition of definitions) {
     const node = createFilter(definition);
@@ -107,4 +107,76 @@ test('close-to-tray defaults off for legacy settings and validates persisted cho
   assert.equal(validateSession(legacy).closeToTray, false);
   for (const enabled of [false, true]) assert.equal(validateSession({...legacy, closeToTray:enabled}).closeToTray, enabled);
   for (const value of [null, 'true', 1]) assert.throws(() => validateSession({...legacy, closeToTray:value}));
+});
+
+test('RVC parameters have declared defaults and bounds', () => {
+  const definition = definitions.find(d => d.type === 'rvc')!;
+  assert.deepEqual(definition.parameters.map(({key,min,max,step,default:value}) => ({key,min,max,step,default:value})), [
+    {key:'pitch',min:-24,max:24,step:1,default:0},
+    {key:'formant',min:-12,max:12,step:0.5,default:0},
+    {key:'index',min:0,max:100,step:1,default:50},
+    {key:'rms',min:0,max:100,step:1,default:50},
+  ]);
+  const node = createFilter(definition);
+  assert.equal(node.model, undefined, 'no explicit model selects the prepared default voice');
+  for (const [key,value] of [['pitch',-24],['pitch',24],['formant',-12],['formant',12],['index',0],['index',100],['rms',0],['rms',100]] as const) {
+    assert.equal(validateSession({...emptySession,chain:[{...node,params:{...node.params,[key]:value}}]}).chain[0].params[key],value);
+  }
+  for (const [key,value] of [['pitch',-25],['pitch',25],['formant',-12.5],['formant',12.5],['index',-1],['index',101],['rms',-1],['rms',101]] as const) {
+    assert.throws(() => validateSession({...emptySession,chain:[{...node,params:{...node.params,[key]:value}}]}));
+  }
+});
+
+test('a chain accepts one sortable RVC and rejects a second even when bypassed', () => {
+  const definition = definitions.find(d => d.type === 'rvc')!;
+  const rvc = createFilter(definition);
+  const gain = createFilter(definitions.find(d => d.type === 'gain')!);
+  const chain = moveFilter([gain,rvc],rvc.id,0);
+  assert.deepEqual(chain.map(node => node.type), ['rvc','gain']);
+  assert.deepEqual(validateSession({...emptySession,chain}).chain,chain);
+  assert.deepEqual(insertFilter(chain,definition,1),chain);
+  assert.deepEqual(duplicateFilter(chain,rvc.id),chain);
+  const second = {...cloneChain([rvc])[0],enabled:false};
+  assert.throws(() => validateSession({...emptySession,chain:[rvc,second]}));
+});
+
+test('RVC model paths validate and survive persistence, preset cloning and undo', () => {
+  const definition = definitions.find(d => d.type === 'rvc')!;
+  const node = {
+    ...createFilter(definition),
+    params:{pitch:8,formant:1.5,index:65,rms:35},
+    model:{path:'C:\\voices\\voice.pth',index:'C:\\voices\\voice.index'},
+  };
+  const saved = validateSession({...emptySession,chain:[node],presets:[{id:'rvc-preset',name:'RVC',chain:[node]}]});
+  const loaded = validateSession(JSON.parse(JSON.stringify(saved)));
+  assert.deepEqual(loaded.chain,[node]);
+  assert.deepEqual(loaded.presets[0].chain,[node]);
+
+  const clone = cloneChain(loaded.presets[0].chain)[0];
+  assert.notEqual(clone.id,node.id);
+  assert.notEqual(clone.model,node.model);
+  clone.params.pitch = -4;
+  clone.model!.path = 'C:\\voices\\copy.pth';
+  assert.equal(node.params.pitch,8);
+  assert.equal(node.model!.path,'C:\\voices\\voice.pth');
+
+  let history = {...emptyHistory,present:loaded.chain};
+  const changed = [{...loaded.chain[0],params:{...node.params,pitch:-6},model:{...node.model!,path:'C:\\voices\\edited.pth',index:''}}];
+  history = editChain(history,changed);
+  assert.deepEqual(undoChain(history).present,loaded.chain);
+  assert.deepEqual(redoChain(undoChain(history)).present,changed);
+});
+
+test('RVC model paths require bounded .pth and optional .index names', () => {
+  const node = createFilter(definitions.find(d => d.type === 'rvc')!);
+  const accept = (path:string,index:string) => validateSession({...emptySession,chain:[{...node,model:{path,index}}]});
+  assert.doesNotThrow(() => accept('voice.pth',''));
+  assert.doesNotThrow(() => accept('x'.repeat(32763)+'.pth','x'.repeat(32761)+'.index'));
+  assert.doesNotThrow(() => accept('声'.repeat(32763)+'.pth','声'.repeat(32761)+'.index'));
+  for (const [path,index] of [
+    ['', ''], ['voice.pt',''], ['voice.pth','voice.idx'], ['voice\0.pth',''], ['voice.pth','voice\0.index'],
+    ['x'.repeat(32764)+'.pth',''], ['voice.pth','x'.repeat(32762)+'.index'],
+  ]) assert.throws(() => accept(path,index));
+  const ordinary = createFilter(definitions.find(d => d.type === 'gain')!);
+  assert.throws(() => validateSession({...emptySession,chain:[{...ordinary,model:{path:'voice.pth',index:''}}]}));
 });

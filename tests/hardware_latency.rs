@@ -6,6 +6,7 @@ use mic_engine::{
 };
 use rtrb::{Consumer, RingBuffer};
 use std::{
+    io::Write,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -223,6 +224,16 @@ fn correlate_at_rate(
     rate: usize,
     minimum_rms: f64,
 ) -> Vec<(f64, f64)> {
+    correlate_with_max_delay(reference, cable, rate, minimum_rms, 300)
+}
+
+fn correlate_with_max_delay(
+    reference: &[Frame],
+    cable: &[Frame],
+    rate: usize,
+    minimum_rms: f64,
+    max_delay_ms: usize,
+) -> Vec<(f64, f64)> {
     let mut results = Vec::new();
     for window in reference.windows(512).step_by(rate * 2 / 5).skip(5) {
         let mean = window.iter().map(|x| x.value as f64).sum::<f64>() / 512.0;
@@ -233,8 +244,7 @@ fn correlate_at_rate(
         }
         let origin = cable.partition_point(|x| x.time < window[0].time);
         let mut best = (0.0, 0.0);
-        // Search beyond the acceptance limit so slower routes cannot pass by clipping.
-        for offset in 0..rate * 3 / 10 {
+        for offset in 0..rate * max_delay_ms / 1000 {
             let begin = origin + offset;
             if begin + 512 >= cable.len() {
                 break;
@@ -341,6 +351,7 @@ fn processed_reference_retains_algorithmic_and_hardware_delay() {
                 id: kind.into(),
                 kind: kind.into(),
                 enabled: true,
+                model: None,
                 params,
             }
         })
@@ -525,12 +536,14 @@ fn measure_input_latency(budget_ms: f64) {
                 id: "latency-frequency".into(),
                 kind: "frequency".into(),
                 enabled: true,
+                model: None,
                 params: [("shift_hz".into(), 0.0)].into_iter().collect(),
             },
             FilterConfig {
                 id: "latency-gain".into(),
                 kind: "gain".into(),
                 enabled: true,
+                model: None,
                 params: [("gain_db".into(), -6.0)].into_iter().collect(),
             },
         ],
@@ -717,6 +730,55 @@ fn envelope_calibration_survives_carrier_and_gain_changes() {
 }
 
 #[test]
+fn correlation_search_finds_a_known_700ms_delay_past_the_old_budget() {
+    const RATE: usize = 500;
+    const DELAY_MS: usize = 700;
+    const MAX_DELAY_MS: usize = 1500;
+    const FRAMES: usize = 8000;
+
+    let mut seed = 17_u32;
+    let amplitudes: Vec<_> = (0..FRAMES)
+        .map(|_| {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            0.03 + 0.2 * seed as f32 / u32::MAX as f32
+        })
+        .collect();
+    let reference: Vec<_> = amplitudes
+        .iter()
+        .enumerate()
+        .map(|(i, value)| Frame {
+            time: i as f64 / RATE as f64,
+            value: *value,
+        })
+        .collect();
+    let delay_frames = RATE * DELAY_MS / 1000;
+    let output_len = FRAMES + delay_frames + RATE * MAX_DELAY_MS / 1000;
+    let delayed: Vec<_> = (0..output_len)
+        .map(|i| Frame {
+            time: i as f64 / RATE as f64,
+            value: i
+                .checked_sub(delay_frames)
+                .filter(|source| *source < amplitudes.len())
+                .map_or(0.0, |source| amplitudes[source]),
+        })
+        .collect();
+    let minimum_rms = 10.0_f64.powf(-50.0 / 20.0);
+
+    let clipped = correlate_at_rate(&reference, &delayed, RATE, minimum_rms);
+    assert!(clipped.len() >= 20);
+    assert!(
+        clipped.iter().all(|(_, score)| *score < 0.5),
+        "the 300ms search must not report a false passing match: {clipped:?}"
+    );
+
+    let results = correlate_with_max_delay(&reference, &delayed, RATE, minimum_rms, MAX_DELAY_MS);
+    assert!(results.len() >= 20);
+    assert!(results
+        .iter()
+        .all(|(delay, score)| (delay - DELAY_MS as f64).abs() <= 2.0 && *score > 0.95));
+}
+
+#[test]
 #[ignore = "requires audible microphone input and VB-CABLE for four new presets"]
 fn new_presets_microphone_to_cable_p95_is_under_200ms() {
     measure_preset_latency(200.0);
@@ -896,4 +958,375 @@ fn female_preset_runs_without_underruns() {
     }
     controller.stop();
     drop(cable_stream);
+}
+
+fn default_filter(kind: &str, id: &str) -> FilterConfig {
+    let definitions: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../src/app/src/filters.json")).unwrap();
+    let definition = definitions
+        .iter()
+        .find(|definition| definition["type"] == kind)
+        .unwrap_or_else(|| panic!("missing {kind} filter definition"));
+    let params = definition["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|parameter| {
+            (
+                parameter["key"].as_str().unwrap().to_owned(),
+                parameter["default"].as_f64().unwrap() as f32,
+            )
+        })
+        .collect();
+    FilterConfig {
+        id: id.into(),
+        kind: kind.into(),
+        enabled: true,
+        params,
+        model: None,
+    }
+}
+
+fn run_ai_capture_stage(
+    stage: &str,
+    expected_bypassed: bool,
+    controller: &mut Controller,
+    received: &mut Consumer<Frame>,
+    errors: &Arc<Mutex<Vec<String>>>,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut frames = 0usize;
+    let mut peak = 0.0_f32;
+    while std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+        while let Ok(frame) = received.pop() {
+            assert!(
+                frame.value.is_finite(),
+                "{stage}: CABLE capture was non-finite"
+            );
+            peak = peak.max(frame.value.abs());
+            frames += 1;
+        }
+        let status = controller.status();
+        assert!(
+            status.running,
+            "{stage}: pipeline stopped (error: {:?})",
+            status.error.as_deref()
+        );
+        assert!(
+            status.error.is_none(),
+            "{stage}: pipeline error: {:?}",
+            status.error.as_deref()
+        );
+        assert_eq!(status.underruns, 0, "{stage}: pipeline underrun");
+        assert_eq!(status.overflows, 0, "{stage}: pipeline overflow");
+        assert_eq!(status.bypassed, expected_bypassed, "{stage}: bypass state");
+        let callback_errors = errors.lock().unwrap().clone();
+        assert!(
+            callback_errors.is_empty(),
+            "{stage}: capture errors {callback_errors:?}"
+        );
+    }
+    while let Ok(frame) = received.pop() {
+        assert!(
+            frame.value.is_finite(),
+            "{stage}: CABLE capture was non-finite"
+        );
+        peak = peak.max(frame.value.abs());
+        frames += 1;
+    }
+    let status = controller.status();
+    assert!(
+        status.running,
+        "{stage}: pipeline stopped (error: {:?})",
+        status.error.as_deref()
+    );
+    assert!(
+        status.error.is_none(),
+        "{stage}: pipeline error: {:?}",
+        status.error.as_deref()
+    );
+    assert_eq!(status.underruns, 0, "{stage}: pipeline underrun");
+    assert_eq!(status.overflows, 0, "{stage}: pipeline overflow");
+    assert_eq!(status.bypassed, expected_bypassed, "{stage}: bypass state");
+    let callback_errors = errors.lock().unwrap().clone();
+    assert!(
+        callback_errors.is_empty(),
+        "{stage}: capture errors {callback_errors:?}"
+    );
+    assert!(frames > 0, "{stage}: no frames reached CABLE Output");
+    assert!(peak > 1e-3, "{stage}: CABLE capture peak was only {peak}");
+    println!(
+        "{}",
+        serde_json::json!({"stage":stage,"duration_seconds":3,"cable_frames":frames,"cable_peak":peak,"status":status})
+    );
+}
+
+#[test]
+#[ignore = "requires prepared local RVC runtime, selected loopback, physical stimulus playback, and VB-CABLE"]
+fn rvc_wav_reaches_cable_and_survives_live_edits() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("MIC_TEST_AI_ROOT")
+            .expect("set MIC_TEST_AI_ROOT to the prepared AI runtime"),
+    );
+    let input_id =
+        std::env::var("MIC_TEST_INPUT_ID").expect("select the loopback input explicitly");
+    assert!(
+        input_id.starts_with("loopback:"),
+        "select the speaker loopback endpoint"
+    );
+    let host = cpal::default_host();
+    let cable = host
+        .input_devices()
+        .unwrap()
+        .find(|device| {
+            device
+                .description()
+                .unwrap()
+                .name()
+                .contains("CABLE Output")
+        })
+        .expect("VB-CABLE capture endpoint");
+    let output = host
+        .output_devices()
+        .unwrap()
+        .find(|device| device.description().unwrap().name().contains("CABLE Input"))
+        .expect("VB-CABLE render endpoint");
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let stimulus = play_stimulus(Arc::clone(&errors)).expect("set MIC_TEST_STIMULUS_WAV");
+
+    let mut chain = vec![
+        default_filter("highpass", "rvc-highpass"),
+        default_filter("rvc", "rvc-default"),
+        default_filter("gain", "rvc-gain"),
+    ];
+    let mut controller = Controller::with_ai(root);
+    controller
+        .start(&Session {
+            input_id,
+            output_id: output.id().unwrap().to_string(),
+            buffer_ms: 5,
+            chain: chain.clone(),
+            ..Session::default()
+        })
+        .unwrap();
+    let (cable_stream, mut received) = record(&cable, Arc::clone(&errors));
+    cable_stream.play().unwrap();
+
+    run_ai_capture_stage("initial", false, &mut controller, &mut received, &errors);
+
+    chain
+        .iter_mut()
+        .find(|filter| filter.kind == "rvc")
+        .unwrap()
+        .params
+        .insert("pitch".into(), 2.0);
+    controller.set_chain(&chain).unwrap();
+    run_ai_capture_stage("pitch_edit", false, &mut controller, &mut received, &errors);
+
+    chain.swap(0, 1);
+    controller.set_chain(&chain).unwrap();
+    run_ai_capture_stage(
+        "reordered_graph",
+        false,
+        &mut controller,
+        &mut received,
+        &errors,
+    );
+
+    controller.set_bypassed(true).unwrap();
+    run_ai_capture_stage(
+        "global_bypass_on",
+        true,
+        &mut controller,
+        &mut received,
+        &errors,
+    );
+
+    controller.set_bypassed(false).unwrap();
+    run_ai_capture_stage(
+        "global_bypass_off",
+        false,
+        &mut controller,
+        &mut received,
+        &errors,
+    );
+
+    chain.retain(|filter| filter.kind != "rvc");
+    controller.set_chain(&chain).unwrap();
+    run_ai_capture_stage(
+        "rvc_removed",
+        false,
+        &mut controller,
+        &mut received,
+        &errors,
+    );
+
+    controller.stop();
+    let status = controller.status();
+    assert!(!status.running, "controller remained active after stop");
+    assert!(status.error.is_none(), "controller failed while stopping");
+    println!("{}", serde_json::json!({"stage":"stopped","status":status}));
+    drop(cable_stream);
+    drop(stimulus);
+}
+
+#[test]
+#[ignore = "requires prepared local RVC runtime, selected WASAPI loopback, physical stimulus playback, and VB-CABLE"]
+fn rvc_wav_loopback_latency_is_measured() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("MIC_TEST_AI_ROOT")
+            .expect("set MIC_TEST_AI_ROOT to the prepared AI runtime"),
+    );
+    let input_id =
+        std::env::var("MIC_TEST_INPUT_ID").expect("select the loopback input explicitly");
+    let source_id = input_id
+        .strip_prefix("loopback:")
+        .expect("MIC_TEST_INPUT_ID must name a WASAPI loopback endpoint");
+    let speaker_id =
+        std::env::var("MIC_TEST_SPEAKER_ID").expect("select physical playback speakers");
+    assert_eq!(
+        source_id, speaker_id,
+        "stimulus speakers must match the loopback source"
+    );
+
+    let host = cpal::default_host();
+    let reference_device = host
+        .devices()
+        .unwrap()
+        .find(|device| device.id().unwrap().to_string() == source_id)
+        .expect("selected WASAPI render-loopback source");
+    let cable = host
+        .input_devices()
+        .unwrap()
+        .find(|device| {
+            device
+                .description()
+                .unwrap()
+                .name()
+                .contains("CABLE Output")
+        })
+        .expect("VB-CABLE capture endpoint");
+    let output = host
+        .output_devices()
+        .unwrap()
+        .find(|device| device.description().unwrap().name().contains("CABLE Input"))
+        .expect("VB-CABLE render endpoint");
+
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let stimulus = play_stimulus(Arc::clone(&errors)).expect("set MIC_TEST_STIMULUS_WAV");
+    let rvc = default_filter("rvc", "rvc-latency");
+    assert_eq!(rvc.params["pitch"], 0.0);
+    assert_eq!(rvc.params["formant"], 0.0);
+    assert_eq!(rvc.params["index"], 50.0);
+    assert_eq!(rvc.params["rms"], 50.0);
+    let mut controller = Controller::with_ai(root);
+    controller
+        .start(&Session {
+            input_id,
+            output_id: output.id().unwrap().to_string(),
+            buffer_ms: 5,
+            chain: vec![rvc],
+            ..Session::default()
+        })
+        .unwrap();
+
+    let (reference_stream, reference) = record(&reference_device, Arc::clone(&errors));
+    let (cable_stream, received) = record(&cable, Arc::clone(&errors));
+    reference_stream.play().unwrap();
+    cable_stream.play().unwrap();
+
+    for second in 1..=16 {
+        std::thread::sleep(Duration::from_secs(1));
+        let status = controller.status();
+        assert!(status.running, "RVC latency run stopped at {second}s");
+        assert!(
+            status.error.is_none(),
+            "RVC latency run failed at {second}s"
+        );
+        assert_eq!(status.underruns, 0, "RVC latency run underrun at {second}s");
+        assert_eq!(status.overflows, 0, "RVC latency run overflow at {second}s");
+        let callback_errors = errors.lock().unwrap().clone();
+        assert!(
+            callback_errors.is_empty(),
+            "capture errors at {second}s: {callback_errors:?}"
+        );
+        println!("{}", serde_json::json!({"second":second,"status":status}));
+    }
+    let status = controller.status();
+    assert!(status.running && status.error.is_none());
+    assert_eq!(status.underruns, 0);
+    assert_eq!(status.overflows, 0);
+    controller.stop();
+    drop(reference_stream);
+    drop(cable_stream);
+    drop(stimulus);
+
+    let reference = envelope(reference);
+    let cable = envelope(received);
+    let results =
+        correlate_with_max_delay(&reference, &cable, 500, 10.0_f64.powf(-50.0 / 20.0), 1500);
+    assert!(
+        results.len() >= 20,
+        "RVC envelope calibration needs at least 20 windows; observed {}: {results:?}",
+        results.len(),
+    );
+    let mut matched: Vec<_> = results
+        .iter()
+        .filter(|(_, score)| *score >= 0.5)
+        .map(|(delay, _)| *delay)
+        .collect();
+    let match_ratio = matched.len() as f64 / results.len() as f64;
+    assert!(
+        match_ratio >= 0.8,
+        "RVC envelope calibration match ratio was {match_ratio:.3}; raw results: {results:?}"
+    );
+    matched.sort_by(f64::total_cmp);
+    let p95_index = ((0.95 * matched.len() as f64).ceil() as usize).saturating_sub(1);
+    let p95_ms = matched[p95_index];
+    assert!(
+        p95_ms <= 1000.0,
+        "RVC WASAPI loopback to VB-CABLE p95 was {p95_ms:.2}ms; raw results: {results:?}"
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "stage":"rvc_wav_loopback_latency",
+            "method":"WASAPI render-loopback -> RVC -> VB-CABLE capture; 2ms RMS-envelope correlation; no algorithmic-delay subtraction or timestamp shift",
+            "search_max_delay_ms":1500,
+            "window_count":results.len(),
+            "matched_windows":matched.len(),
+            "match_ratio":match_ratio,
+            "p95_ms":p95_ms,
+            "raw_delays_and_scores":results,
+            "status":status
+        })
+    );
+}
+
+#[test]
+#[ignore = "plays the WAV stimulus while the native UI regression runs"]
+fn wav_stimulus_for_native_ui() {
+    let seconds: u64 = std::env::var("MIC_TEST_SECONDS")
+        .unwrap_or_else(|_| "120".into())
+        .parse()
+        .expect("MIC_TEST_SECONDS must be an integer");
+    assert!(
+        (1..=180).contains(&seconds),
+        "MIC_TEST_SECONDS must be 1..=180"
+    );
+
+    let errors = Arc::new(Mutex::new(Vec::new()));
+    let stimulus = play_stimulus(Arc::clone(&errors)).expect("set MIC_TEST_STIMULUS_WAV");
+    println!("STIMULUS_READY");
+    std::io::stdout().flush().expect("flush stimulus readiness");
+    for second in 1..=seconds {
+        std::thread::sleep(Duration::from_secs(1));
+        let callback_errors = errors.lock().unwrap().clone();
+        assert!(
+            callback_errors.is_empty(),
+            "WAV stimulus callback errors at {second}s: {callback_errors:?}"
+        );
+    }
+    drop(stimulus);
 }

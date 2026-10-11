@@ -21,16 +21,20 @@ const move=(x,y,duration=100)=>({type:'pointerMove',origin:'viewport',x:Math.rou
 try {
  const created=await request('/session','POST',{capabilities:{alwaysMatch:{browserName:'webview2','ms:edgeOptions':{binary:process.argv[3]}}}});
  session=created.sessionId;
+ await request('/session/'+session+'/timeouts','POST',{script:60000});
  await wait(()=>js(()=>Boolean(window.__TAURI_INTERNALS__&&document.querySelector('.library-card'))));
  assert.equal(await request('/session/'+session+'/title','GET'),'isMyMicThatBad · 音频工作台');
  await captureErrors();
  original=(await invoke('load_session')).session;
  const devices=await invoke('list_devices');
- const input=devices.find(d=>d.input&&d.id===process.env.MIC_TEST_INPUT_ID)??devices.find(d=>d.input&&d.isDefault&&!d.name.includes('CABLE'));
+ const requestedInputId=process.env.MIC_TEST_INPUT_ID;
+ const loopback=requestedInputId?.startsWith('loopback:')??false;
+ const input=loopback?devices.find(d=>!d.input&&d.id===requestedInputId.slice('loopback:'.length)):devices.find(d=>d.input&&d.id===requestedInputId)??devices.find(d=>d.input&&d.isDefault&&!d.name.includes('CABLE'));
  const output=devices.find(d=>!d.input&&d.name.includes('CABLE Input'));
  const monitor=devices.find(d=>!d.input&&d.isDefault&&!d.name.includes('CABLE'));
  assert.ok(input&&output&&monitor,'actual hardware endpoints exist');
- const configured={...original,inputId:input.id,outputId:output.id,monitorId:monitor.id,monitoring:false,bufferMs:5,chain:[],presets:[]};
+ const configured={...original,inputId:loopback?requestedInputId:input.id,outputId:output.id,monitorId:monitor.id,monitoring:false,bufferMs:5,chain:[],presets:[]};
+ console.log(JSON.stringify({input_id:configured.inputId,method:loopback?'WASAPI render loopback':'selected native input'}));
  await invoke('save_session',{session:configured});await cmd('/refresh');
  await wait(()=>js(()=>Boolean(document.querySelector('.empty-chain'))));
  await captureErrors();
@@ -86,7 +90,7 @@ try {
    const status=await invoke('get_status');console.log(JSON.stringify({preset:name,startup,status}));assert.equal(status.error,null);assert.equal(status.underruns,startup.underruns,name+' must not accumulate underruns after warmup');assert.equal(status.overflows,0,name+' overflows');
    await transport();await wait(async()=>!(await invoke('get_status')).running);
  }
- assert.equal(await js(()=>document.querySelectorAll('.library-card').length),13);
+ assert.equal(await js(()=>document.querySelectorAll('.library-card').length),14);
  for(const name of ['噪声门','共振峰移位','均衡器','压缩器','音高移位','混响','颤音','数字降质']) {
    await click('添加'+name);await pause(600);
    await js(()=>{for(const n of document.querySelectorAll('.inspector input[type="number"]')) {
@@ -124,6 +128,119 @@ try {
  await transport();await wait(async()=>(await invoke('get_status')).running);
  assert.equal((await invoke('get_status')).bypassed,false,'restarting resets comparison');
  await transport();await wait(async()=>!(await invoke('get_status')).running);
+ const aiStatus=await invoke('ai_status');
+ if(!aiStatus.ready) console.log(JSON.stringify({stage:'native_ui_rvc',status:'skipped',reason:'test copy AI runtime is not ready',ai_status:{ready:aiStatus.ready,preparing:aiStatus.preparing,error:aiStatus.error}}));
+ else {
+   assert.equal(aiStatus.preparing,false);
+   assert.equal(aiStatus.error,null);
+   assert.ok(aiStatus.modelPath.endsWith('.pth'));
+   const aiBase=(await invoke('load_session')).session;
+   await click('添加AI变声 (RVC)');
+   await wait(async()=>(await invoke('load_session')).session.chain.some(node=>node.type==='rvc'));
+   await js(()=>{const add=document.querySelector('button[aria-label="添加AI变声 (RVC)"]');if(!add||!add.disabled)throw Error('second AI card must be disabled');});
+   await click('AI变声 (RVC)更多操作');
+	   await js(()=>{const menu=document.querySelector('[role="menu"][aria-label="AI变声 (RVC)更多操作"]');if(!menu||!menu.matches(':popover-open'))throw Error('AI card menu is not open');const item=Array.from(menu.querySelectorAll('[role="menuitem"]')).find(node=>node.textContent.includes('复制滤镜'));if(!item||!item.disabled)throw Error('AI card duplication must be disabled');});
+   await click('选择AI变声 (RVC)滤镜');
+   await wait(()=>js(()=>document.querySelectorAll('.inspector input[type="number"]').length===4));
+   await js(()=>{const input=document.querySelector('.inspector input[type="number"]');if(!input)throw Error('AI pitch input missing');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'2');input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();input.blur();});
+   await pause(700);
+   let aiSession=(await invoke('load_session')).session;
+   assert.equal(aiSession.chain.find(node=>node.type==='rvc').params.pitch,2);
+   await click('撤销管线修改');
+   await wait(async()=>(await invoke('load_session')).session.chain.find(node=>node.type==='rvc').params.pitch===0);
+   await js(async modelPath=>{
+     const internals=window.__TAURI_INTERNALS__, realFetch=window.fetch;
+     const chooseUrl=internals.convertFileSrc('choose_ai_model','ipc');
+     const loadUrl=internals.convertFileSrc('load_session','ipc');
+     let sawLoad=false;
+     let resolveChooseRequest;
+     const chooseRequest=new Promise(resolve=>{resolveChooseRequest=resolve;});
+     window.testAiChooseCalls=0;
+     const wrapper=function(input){
+       const url=typeof input==='string'?input:input?.url??String(input);
+       if(url===loadUrl)sawLoad=true;
+       if(url===chooseUrl){
+         window.testAiChooseCalls++;
+         resolveChooseRequest();
+         return Promise.resolve(new Response(JSON.stringify(modelPath),{status:200,headers:{'Content-Type':'application/json','Tauri-Response':'ok'}}));
+       }
+       return Reflect.apply(realFetch,window,arguments);
+     };
+     try {
+       window.fetch=wrapper;
+       if(window.fetch!==wrapper)throw Error('fetch mock was not installed; refusing to open the native chooser');
+       await internals.invoke('load_session');
+       if(!sawLoad)throw Error('Tauri IPC did not use window.fetch; refusing to open the native chooser');
+       const button=Array.from(document.querySelectorAll('.ai-model button')).find(node=>node.textContent.trim()==='导入 .pth 模型');
+       if(!button||button.disabled)throw Error('.pth import button unavailable');
+       button.click();
+       await Promise.race([chooseRequest,new Promise((_,reject)=>setTimeout(()=>reject(Error('choose_ai_model IPC fetch was not intercepted')),5000))]);
+     } finally {window.fetch=realFetch;}
+   },aiStatus.modelPath);
+   await wait(async()=>(await invoke('load_session')).session.chain.find(node=>node.type==='rvc')?.model?.path===aiStatus.modelPath);
+   await pause(700);
+   assert.equal(await js(()=>window.testAiChooseCalls),1,'only choose_ai_model is mocked');
+   aiSession=(await invoke('load_session')).session;
+   let aiNode=aiSession.chain.find(node=>node.type==='rvc');
+   assert.equal(aiNode.model.path,aiStatus.modelPath);
+   assert.equal(aiNode.model.index,'');
+   assert.equal(JSON.parse(await readFile(process.argv[4],'utf8')).chain.find(node=>node.type==='rvc').model.index,'','imported model persisted');
+   const aiPresetName='RVC回归持久化';
+   await click('声音预设');
+   await js(()=>Array.from(document.querySelectorAll('[role="menuitem"]')).find(node=>node.textContent==='保存当前管线').click());
+   await js(name=>{const input=document.getElementById('preset-name');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,name);input.dispatchEvent(new Event('input',{bubbles:true}));},aiPresetName);
+   await click('保存预设');await pause(700);
+   aiSession=(await invoke('load_session')).session;
+   const savedAiPreset=aiSession.presets.find(preset=>preset.name===aiPresetName);
+   assert.equal(savedAiPreset.chain.find(node=>node.type==='rvc').model.path,aiStatus.modelPath);
+   assert.equal(savedAiPreset.chain.find(node=>node.type==='rvc').model.index,'');
+   await click('撤销管线修改');
+   await wait(async()=>(await invoke('load_session')).session.chain.find(node=>node.type==='rvc').model===undefined);
+   await click('声音预设');
+   await js(name=>{const item=Array.from(document.querySelectorAll('[role="menuitem"]')).find(node=>node.textContent.startsWith(name));if(!item)throw Error('saved RVC preset missing');item.click();},aiPresetName);
+   await wait(async()=>(await invoke('load_session')).session.chain.find(node=>node.type==='rvc')?.model?.path===aiStatus.modelPath);
+   await pause(700);
+   aiSession=(await invoke('load_session')).session;
+   aiNode=aiSession.chain.find(node=>node.type==='rvc');
+   assert.equal(aiNode.model.path,aiStatus.modelPath,'saved preset restores imported model');
+   assert.equal(aiNode.model.index,'','saved preset preserves empty index');
+   await click('选择AI变声 (RVC)滤镜');
+   await request('/session/'+session+'/timeouts','POST',{script:60000});
+   await transport();
+   const started=await invoke('get_status');
+   assert.equal(started.running,true,'RVC processing starts with the ready local runtime');
+   assert.equal(started.error,null);
+   await pause(2000);
+   const live=await invoke('get_status');
+   assert.equal(live.running,true,'RVC remains running');
+   assert.equal(live.error,null,'RVC has no processing error');
+   await js(()=>{for(const label of ['导入 .pth 模型','导入 .index 索引']){const button=Array.from(document.querySelectorAll('.ai-model button')).find(node=>node.textContent.trim()===label);if(!button||!button.disabled)throw Error(label+' must be disabled while running');}});
+   await click('原音对比');await wait(async()=>(await invoke('get_status')).bypassed);
+   const bypassed=await invoke('get_status');
+   assert.equal(bypassed.running,true);
+   assert.equal(bypassed.bypassed,true,'original comparison reaches the native audio controller');
+   await click('原音对比');await wait(async()=>(await invoke('get_status')).bypassed===false);
+   const wetAgain=await invoke('get_status');assert.equal(wetAgain.bypassed,false);
+   await transport();await wait(async()=>!(await invoke('get_status')).running);
+   const stoppedAi=await invoke('get_status');assert.equal(stoppedAi.running,false);
+   const invalidBase=(await invoke('load_session')).session;
+   const invalidModel={...invalidBase,chain:invalidBase.chain.map(node=>node.type==='rvc'?{...node,model:{path:aiStatus.modelPath+'.missing.pth',index:''}}:node)};
+   await invoke('save_session',{session:invalidModel});await cmd('/refresh');
+   await wait(()=>js(()=>Boolean(document.querySelector('.library-card'))));await captureErrors();
+   await click('选择AI变声 (RVC)滤镜');await transport();
+   const invalidStatus=await invoke('get_status');
+   await wait(()=>js(()=>Boolean(document.querySelector('.message-banner.error-banner'))));
+   const invalidError=await js(()=>document.querySelector('.message-banner.error-banner')?.textContent.trim()??'');
+   assert.equal(invalidStatus.running,false,'invalid explicit RVC model does not start audio');
+   assert.ok(invalidStatus.error,'invalid explicit RVC model is reported in native status');
+   assert.ok(invalidError,'invalid explicit RVC model shows an error');
+   console.log(JSON.stringify({stage:'native_ui_rvc',status:'passed',input_id:configured.inputId,method:'WAV-driven WASAPI loopback through VB-CABLE',ai_status:{ready:aiStatus.ready,preparing:aiStatus.preparing},checks:['single-card add/copy limits','parameter edit undo','mocked chooser response with real native invokes','empty-index persistence and undo','preset model persistence','RVC start and live error status','model/index selection disabled while running','native original comparison bypass','invalid model fails closed'],started,live,bypassed,wet_again:wetAgain,stopped:stoppedAi,invalid_status:invalidStatus,invalid_error:invalidError}));
+   await invoke('stop_audio');
+   await invoke('save_session',{session:aiBase});await cmd('/refresh');
+   await wait(()=>js(()=>Boolean(document.querySelector('.library-card'))));await captureErrors();await pause(700);
+   assert.deepEqual((await invoke('load_session')).session.chain,aiBase.chain,'restore pre-AI native UI test chain');
+   assert.equal(await js(()=>Boolean(document.querySelector('.message-banner.error-banner'))),false,'clear expected model error after restoring config');
+ }
  await click('最大化窗口');await wait(()=>invoke('plugin:window|is_maximized',{label:'main'}));
  await click('还原窗口');await wait(async()=>!(await invoke('plugin:window|is_maximized',{label:'main'})));
  const shot=await request('/session/'+session+'/screenshot','GET');await writeFile(process.argv[2],Buffer.from(shot,'base64'));

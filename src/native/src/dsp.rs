@@ -4,6 +4,14 @@ pub const BLOCK: usize = 256;
 pub const RATE: f32 = 48_000.0;
 pub const MAX_FILTERS: usize = 64;
 pub const MAX_FILTER_LATENCY: usize = 2048;
+pub const MAX_CHAIN_LATENCY: usize = MAX_FILTERS * MAX_FILTER_LATENCY + crate::ai::LATENCY;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AiModel {
+    pub path: String,
+    #[serde(default)]
+    pub index: String,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FilterConfig {
@@ -12,6 +20,8 @@ pub struct FilterConfig {
     pub kind: String,
     pub enabled: bool,
     pub params: BTreeMap<String, f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<AiModel>,
 }
 #[derive(Deserialize)]
 struct Definition {
@@ -30,10 +40,25 @@ pub fn validate(configs: &[FilterConfig]) -> Result<(), String> {
     if configs.len() > MAX_FILTERS {
         return Err("最多支持 64 个滤镜".into());
     }
+    if configs.iter().filter(|c| c.kind == "rvc").count() > 1 {
+        return Err("每条管线最多支持一张 AI 卡片".into());
+    }
     let definitions: Vec<Definition> =
         serde_json::from_str(include_str!("../../src/filters.json")).map_err(|e| e.to_string())?;
     let mut ids = HashSet::new();
     for config in configs {
+        if let Some(model) = &config.model {
+            if config.kind != "rvc"
+                || model.path.is_empty()
+                || !model.path.to_lowercase().ends_with(".pth")
+                || (!model.index.is_empty() && !model.index.to_lowercase().ends_with(".index"))
+                || [&model.path, &model.index]
+                    .iter()
+                    .any(|p| p.encode_utf16().count() > 32767 || p.contains('\0'))
+            {
+                return Err("AI 模型路径无效".into());
+            }
+        }
         if config.id.is_empty() || !ids.insert(&config.id) {
             return Err("滤镜实例 ID 无效或重复".into());
         }
@@ -58,6 +83,9 @@ pub trait Filter: Send {
     fn set_params(&mut self, params: &BTreeMap<String, f32>);
     fn latency(&self) -> usize {
         0
+    }
+    fn error(&self) -> Option<String> {
+        None
     }
 }
 pub(crate) struct Smooth {
@@ -153,6 +181,12 @@ pub struct Chain {
 }
 impl Chain {
     pub fn new(configs: &[FilterConfig]) -> Result<Self, String> {
+        Self::with_ai(configs, None)
+    }
+    pub fn with_ai(
+        configs: &[FilterConfig],
+        root: Option<&std::path::Path>,
+    ) -> Result<Self, String> {
         validate(configs)?;
         let mut nodes = Vec::with_capacity(configs.len());
         let mut latency = 0;
@@ -220,10 +254,16 @@ impl Chain {
                 "reverb" => Box::new(crate::effects::Reverb::new(&config.params)),
                 "tremolo" => Box::new(crate::effects::Tremolo::new(&config.params)),
                 "bitcrusher" => Box::new(crate::effects::Bitcrusher::new(&config.params)),
+                "rvc" => Box::new(crate::ai::Rvc::new(
+                    root.ok_or("请先准备 AI 运行环境")?,
+                    config,
+                )?),
                 _ => return Err("未知滤镜".into()),
             };
             let frames = processor.latency();
-            if frames > MAX_FILTER_LATENCY {
+            if frames > MAX_FILTER_LATENCY
+                && !(config.kind == "rvc" && frames == crate::ai::LATENCY)
+            {
                 return Err("滤镜延迟超过补偿容量".into());
             }
             latency += frames;
@@ -258,24 +298,25 @@ impl Chain {
         output.copy_from_slice(&self.a[..len]);
     }
     pub fn same_structure(&self, other: &Self) -> bool {
-        self.configs.len() == other.configs.len()
-            && self
-                .configs
-                .iter()
-                .zip(&other.configs)
-                .all(|(a, b)| a.id == b.id && a.kind == b.kind)
+        same_structure(&self.configs, &other.configs)
     }
     pub fn update_from(&mut self, other: &Self) {
+        self.update_configs(&other.configs);
+    }
+    pub fn error(&self) -> Option<String> {
+        self.nodes.iter().find_map(|node| node.processor.error())
+    }
+    pub fn update_configs(&mut self, configs: &[FilterConfig]) {
         for (index, node) in self.nodes.iter_mut().enumerate() {
             let config = &mut self.configs[index];
-            let next = &other.configs[index];
+            let next = &configs[index];
             if let Some(params) = &mut node.voice_pair {
                 *params.get_mut("semitones").unwrap() = if next.enabled {
                     next.params["semitones"]
                 } else {
                     0.0
                 };
-                let formant = &other.configs[index + 1];
+                let formant = &configs[index + 1];
                 *params.get_mut("formant_semitones").unwrap() = if formant.enabled {
                     formant.params["semitones"]
                 } else {
@@ -294,6 +335,13 @@ impl Chain {
             }
         }
     }
+}
+
+pub fn same_structure(a: &[FilterConfig], b: &[FilterConfig]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(a, b)| a.id == b.id && a.kind == b.kind && a.model == b.model)
 }
 
 use biquad::{Biquad, Coefficients, DirectForm1, ToHertz, Type, Q_BUTTERWORTH_F32};
