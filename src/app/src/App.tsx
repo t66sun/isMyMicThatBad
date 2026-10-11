@@ -152,6 +152,15 @@ export default function App() {
     try { if (status.running) await api.monitoring(enabled); setSession(previous => ({ ...previous, monitoring: enabled })); }
     catch (error) { setError(String(error)); }
   };
+  const toggleBypass = useCallback(async () => {
+    setBusy(true); setError('');
+    try {
+      await api.bypass(!status.bypassed);
+      setStatus(await api.status());
+      setAnnouncement(status.bypassed ? '已恢复处理后声音。' : '正在对比原音，管线参数保留。');
+    } catch (error) { setError(String(error)); }
+    finally { setBusy(false); }
+  }, [status.bypassed]);
   const refresh = async () => {
     try { setDevices(await api.devices()); } catch (error) { setError(String(error)); }
   };
@@ -191,7 +200,7 @@ export default function App() {
       <button className="route-summary" title={inputName + ' → ' + outputName} aria-label="打开音频路由设置" disabled={dragging} onClick={() => settings.current?.showModal()}>
         <span>{inputName.startsWith('Microphone') ? '麦克风' : inputName}</span><span aria-hidden="true">→</span><span>{outputName.startsWith('CABLE Input') ? 'CABLE Input' : outputName}</span>
       </button>
-      <span className="status-label">{status.running ? '正在处理' : '已停止'}</span>
+      <span className="status-label">{status.running ? status.bypassed ? '原音对比中' : '正在处理' : '已停止'}</span>
       <button className="transport" disabled={busy || !ready || !api.native || (!status.running && (!session.inputId || !session.outputId))} onClick={toggleAudio}>
         {status.running ? <Square size={15} aria-hidden="true" /> : <Play size={16} fill="currentColor" aria-hidden="true" />}
         {busy ? '请稍候' : status.running ? '停止处理' : '开始处理'}
@@ -205,7 +214,8 @@ export default function App() {
     {notice ? <div role="status" className="message-banner"><span>{notice}</span><button aria-label="关闭提示" onClick={() => setNotice('')}><X size={15} aria-hidden="true" /></button></div> : null}
     <main className="workspace">
       <ChainEditor chain={session.chain} selectedId={selected?.id ?? null} onSelect={select} onChange={changeChain} onAdd={add} onAction={action} onDraggingChange={setDragging}
-        canUndo={ready && history.past.length > 0} canRedo={ready && history.future.length > 0} onUndo={undo} onRedo={redo} />
+        canUndo={ready && history.past.length > 0} canRedo={ready && history.future.length > 0} onUndo={undo} onRedo={redo}
+        bypassed={status.bypassed} canCompare={status.running && !busy} onCompare={toggleBypass} />
       <section className="inspector glass" aria-label="滤镜参数">
         {selected && definition ? <>
           <div className="inspector-identity"><div className="inspector-icon glass"><FilterIcon type={selected.type} size={34} /></div>

@@ -15,20 +15,70 @@ pub(crate) struct Tremolo {
 }
 impl Tremolo {
     pub(crate) fn new(p: &Params) -> Self {
-        Self { phase: 0.0, rate: Smooth::new(p["rate_hz"]), depth: Smooth::new(p["depth"] / 100.0) }
+        Self {
+            phase: 0.0,
+            rate: Smooth::new(p["rate_hz"]),
+            depth: Smooth::new(p["depth"] / 100.0),
+        }
     }
 }
 impl Filter for Tremolo {
     fn process(&mut self, input: &[f32], output: &mut [f32]) {
         for (x, y) in input.iter().zip(output) {
             *y = *x * (1.0 - self.depth.next() * (0.5 - 0.5 * self.phase.cos() as f32));
-            self.phase = (self.phase + std::f64::consts::TAU * self.rate.next() as f64 / RATE as f64)
+            self.phase = (self.phase
+                + std::f64::consts::TAU * self.rate.next() as f64 / RATE as f64)
                 .rem_euclid(std::f64::consts::TAU);
         }
     }
     fn set_params(&mut self, p: &Params) {
         self.rate.set(p["rate_hz"]);
         self.depth.set(p["depth"] / 100.0);
+    }
+}
+
+pub(crate) struct Bitcrusher {
+    levels: Smooth,
+    hold: Smooth,
+    mix: Smooth,
+    held: f32,
+    remaining: usize,
+}
+impl Bitcrusher {
+    pub(crate) fn new(p: &Params) -> Self {
+        Self {
+            levels: Smooth::new(2.0_f32.powf(p["bits"] - 1.0)),
+            hold: Smooth::new(p["hold"]),
+            mix: Smooth::new(p["mix"] / 100.0),
+            held: 0.0,
+            remaining: 0,
+        }
+    }
+}
+impl Filter for Bitcrusher {
+    fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        for (x, y) in input.iter().zip(output) {
+            let levels = self.levels.next();
+            let hold = self.hold.next().round() as usize;
+            if self.remaining == 0 {
+                self.held = (x.clamp(-1.0, 1.0) * levels).round() / levels;
+                self.remaining = hold;
+            }
+            self.remaining -= 1;
+            let mix = self.mix.next();
+            *y = if mix == 0.0 {
+                *x
+            } else if mix == 1.0 {
+                self.held
+            } else {
+                *x + (self.held - *x) * mix
+            };
+        }
+    }
+    fn set_params(&mut self, p: &Params) {
+        self.levels.set(2.0_f32.powf(p["bits"] - 1.0));
+        self.hold.set(p["hold"]);
+        self.mix.set(p["mix"] / 100.0);
     }
 }
 

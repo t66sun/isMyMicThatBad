@@ -86,8 +86,8 @@ try {
    const status=await invoke('get_status');console.log(JSON.stringify({preset:name,startup,status}));assert.equal(status.error,null);assert.equal(status.underruns,startup.underruns,name+' must not accumulate underruns after warmup');assert.equal(status.overflows,0,name+' overflows');
    await transport();await wait(async()=>!(await invoke('get_status')).running);
  }
- assert.equal(await js(()=>document.querySelectorAll('.library-card').length),12);
- for(const name of ['噪声门','共振峰移位','均衡器','压缩器','音高移位','混响','颤音']) {
+ assert.equal(await js(()=>document.querySelectorAll('.library-card').length),13);
+ for(const name of ['噪声门','共振峰移位','均衡器','压缩器','音高移位','混响','颤音','数字降质']) {
    await click('添加'+name);await pause(600);
    await js(()=>{for(const n of document.querySelectorAll('.inspector input[type="number"]')) {
      const value=Math.min(Number(n.max),Number(n.value)+Number(n.step));
@@ -95,7 +95,34 @@ try {
      n.dispatchEvent(new Event('input',{bubbles:true}));n.focus();n.blur();
    }});await pause(700);
  }
+ await click('选择数字降质滤镜');
+ await js(()=>{const n=document.querySelectorAll('.inspector input[type="number"]')[2];Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(n,'75');n.dispatchEvent(new Event('input',{bubbles:true}));n.focus();n.blur();});
+ await pause(700);
+ assert.equal((await invoke('load_session')).session.chain.find(n=>n.type==='bitcrusher').params.mix,75);
+ await js(()=>{const button=document.querySelector('button[aria-label="原音对比"]');if(!button||!button.disabled||button.getAttribute('aria-pressed')!=='false')throw Error('compare is unavailable while stopped');});
  await transport();await wait(async()=>(await invoke('get_status')).running);
+ await wait(()=>js(()=>{const button=document.querySelector('button[aria-label="原音对比"]');return !button.disabled&&button.getAttribute('aria-pressed')==='false';}));
+ const compareSession=(await invoke('load_session')).session;
+ const compareHistory=await js(()=>['撤销管线修改','重做管线修改'].map(label=>document.querySelector('button[aria-label="'+label+'"]').disabled));
+ const comparePortable=JSON.parse(await readFile(process.argv[4],'utf8')).chain;
+ await click('原音对比');
+ await wait(async()=>(await invoke('get_status')).bypassed);
+ await wait(()=>js(()=>document.querySelector('button[aria-label="原音对比"]').getAttribute('aria-pressed')==='true'));
+ await pause(700);
+ assert.deepEqual((await invoke('load_session')).session,compareSession,'comparison leaves config unchanged');
+ assert.deepEqual(JSON.parse(await readFile(process.argv[4],'utf8')).chain,comparePortable,'comparison leaves portable config unchanged');
+ assert.deepEqual(await js(()=>['撤销管线修改','重做管线修改'].map(label=>document.querySelector('button[aria-label="'+label+'"]').disabled)),compareHistory,'comparison does not enter edit history');
+ await click('原音对比');await wait(async()=>!(await invoke('get_status')).bypassed);
+ await wait(()=>js(()=>document.querySelector('button[aria-label="原音对比"]').getAttribute('aria-pressed')==='false'));
+ await click('原音对比');await wait(async()=>(await invoke('get_status')).bypassed);
+ await transport();await wait(async()=>!(await invoke('get_status')).running);
+ const stopped=await invoke('get_status');assert.equal(stopped.bypassed,false);
+ await js(()=>{const button=document.querySelector('button[aria-label="原音对比"]');if(!button.disabled||button.getAttribute('aria-pressed')!=='false')throw Error('comparison resets when stopped');});
+ const stoppedError=await js(async()=>{try{await window.__TAURI_INTERNALS__.invoke('set_bypassed',{bypassed:true});return '';}catch(error){return String(error);}});
+ assert.match(stoppedError,/请先开始处理再对比原音/,'comparison command reports an error when stopped');
+ assert.equal((await invoke('get_status')).error,null);
+ await transport();await wait(async()=>(await invoke('get_status')).running);
+ assert.equal((await invoke('get_status')).bypassed,false,'restarting resets comparison');
  await transport();await wait(async()=>!(await invoke('get_status')).running);
  await click('最大化窗口');await wait(()=>invoke('plugin:window|is_maximized',{label:'main'}));
  await click('还原窗口');await wait(async()=>!(await invoke('plugin:window|is_maximized',{label:'main'})));

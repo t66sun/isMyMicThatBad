@@ -16,8 +16,8 @@ test('insertion, reorder and duplication preserve independent instance identity'
   assert.equal(chain[1].params.cutoff, 80);
   assert.equal(removeFilter(chain, id).length, 2);
 });
-test('all twelve filters and seven presets have complete valid independent metadata', () => {
-  assert.equal(definitions.length, 12); assert.equal(builtins.length, 7);
+test('all thirteen filters and seven presets have complete valid independent metadata', () => {
+  assert.equal(definitions.length, 13); assert.equal(builtins.length, 7);
   assert.equal(new Set(definitions.map(d => d.type)).size, definitions.length);
   for (const definition of definitions) {
     const node = createFilter(definition);
@@ -26,6 +26,21 @@ test('all twelve filters and seven presets have complete valid independent metad
   }
   for (const preset of builtins) validateSession({...emptySession, chain:preset.chain});
   assert.deepEqual(builtins.slice(3).map(p => p.name), ['女声','炸麦','广播声','空灵声']);
+});
+test('bitcrusher exposes the declared bit-depth, hold and mix bounds', () => {
+  const definition = definitions.find(d => d.type === 'bitcrusher')!;
+  assert.deepEqual(definition.parameters.map(({key,min,max,step,default:value}) => ({key,min,max,step,default:value})), [
+    {key:'bits',min:2,max:16,step:1,default:8},
+    {key:'hold',min:1,max:48,step:1,default:4},
+    {key:'mix',min:0,max:100,step:1,default:100},
+  ]);
+  const node = createFilter(definition);
+  for (const [key,value] of [['bits',2],['bits',16],['hold',1],['hold',48],['mix',0],['mix',100]] as const) {
+    assert.equal(validateSession({...emptySession,chain:[{...node,params:{...node.params,[key]:value}}]}).chain[0].params[key],value);
+  }
+  for (const [key,value] of [['bits',1],['bits',17],['hold',0],['hold',49],['mix',-1],['mix',101]] as const) {
+    assert.throws(() => validateSession({...emptySession,chain:[{...node,params:{...node.params,[key]:value}}]}));
+  }
 });
 
 test('chain history restores identities, parameters, order and bypass without mutating snapshots', () => {

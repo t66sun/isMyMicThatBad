@@ -1,4 +1,4 @@
-use crate::dsp::{Chain, BLOCK, MAX_FILTERS, MAX_FILTER_LATENCY};
+use crate::dsp::{Chain, Smooth, BLOCK, MAX_FILTERS, MAX_FILTER_LATENCY};
 const HISTORY: usize = MAX_FILTERS * MAX_FILTER_LATENCY + 1;
 struct Padding {
     samples: Box<[f32]>,
@@ -98,10 +98,16 @@ pub struct Runner {
     latency: usize,
     old: [f32; BLOCK],
     new: [f32; BLOCK],
+    dry: Padding,
+    dry_block: [f32; BLOCK],
+    wet: Smooth,
 }
 impl Runner {
     pub fn new(graph: Graph) -> Self {
         let latency = graph.chain.latency;
+        let mut dry = Padding::new();
+        dry.delay = latency;
+        dry.previous_delay = latency;
         Self {
             current: graph,
             next: None,
@@ -110,10 +116,16 @@ impl Runner {
             latency,
             old: [0.0; BLOCK],
             new: [0.0; BLOCK],
+            dry,
+            dry_block: [0.0; BLOCK],
+            wet: Smooth::new(1.0),
         }
     }
     pub fn transitioning(&self) -> bool {
         self.next.is_some()
+    }
+    pub fn set_bypassed(&mut self, bypassed: bool) {
+        self.wet.set(if bypassed { 0.0 } else { 1.0 });
     }
     pub fn submit(&mut self, mut graph: Graph) -> Option<Graph> {
         if self.current.chain.same_structure(&graph.chain) {
@@ -123,6 +135,7 @@ impl Runner {
         // shortcut: retain peak FIR delay until stop/start, reset when reducing live chain latency matters.
         let padding_changed = graph.chain.latency > self.latency;
         self.latency = self.latency.max(graph.chain.latency);
+        self.dry.set_delay(self.latency);
         self.current
             .padding
             .set_delay(self.latency - self.current.chain.latency);
@@ -133,6 +146,20 @@ impl Runner {
         None
     }
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) -> Option<Graph> {
+        let retired = self.process_wet(input, output);
+        self.dry_block[..input.len()].copy_from_slice(input);
+        self.dry.process(&mut self.dry_block[..input.len()]);
+        for (dry, wet) in self.dry_block.iter().zip(output) {
+            let mix = self.wet.next();
+            if mix == 0.0 {
+                *wet = *dry;
+            } else if mix != 1.0 {
+                *wet = *dry + (*wet - *dry) * mix;
+            }
+        }
+        retired
+    }
+    fn process_wet(&mut self, input: &[f32], output: &mut [f32]) -> Option<Graph> {
         self.current.process(input, &mut self.old[..input.len()]);
         if let Some(next) = &mut self.next {
             next.process(input, &mut self.new[..input.len()]);

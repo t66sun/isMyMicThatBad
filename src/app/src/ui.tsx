@@ -17,6 +17,7 @@ export function FilterIcon({ type, size = 26 }: { type: string; size?: number })
     pitch: 'M5 18V6m-3 3 3-3 3 3M16 6v12m-3-3 3 3 3-3',
     reverb: 'M2 10v4M6 6v12M10 3v18M14 6v12M18 9v6M22 11v2',
     tremolo: 'M2 12c2-10 4-10 6 0s4 10 6 0 4-10 8 0',
+    bitcrusher: 'M2 17h4V7h4v5h4v7h4V5h4',
   };
   if (type === 'gain') return <AudioLines size={size} strokeWidth={1.7} aria-hidden="true" />;
   if (!paths[type]) return <SlidersHorizontal size={size} strokeWidth={1.7} aria-hidden="true" />;

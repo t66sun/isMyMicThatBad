@@ -13,18 +13,19 @@ try {
  const result=await editorFlow(page);
  await historyFlow(page);
  await raw(page);
- assert.equal(await page.locator('.library-card').count(),12);
+ assert.equal(catalog.length,13);
+ assert.equal(await page.locator('.library-card').count(),13);
  await page.getByRole('button',{name:'向后浏览滤镜库',exact:true}).click();
  await page.waitForTimeout(250);
  assert.ok(await page.locator('#filter-library').evaluate(n=>n.scrollLeft>0));
- for(const type of ['gate','formant','eq','compressor','pitch','reverb','distortion','tremolo']) {
+ for(const type of ['gate','formant','eq','compressor','pitch','reverb','distortion','tremolo','bitcrusher']) {
    const definition=catalog.find(d=>d.type===type);
    await page.getByRole('button',{name:'添加'+definition.name,exact:true}).click();
    await settle(page);
    assert.equal(await page.locator('.inspector input[type="number"]').count(),definition.parameters.length);
    for(const parameter of definition.parameters) {
      const control=page.locator('.inspector').getByLabel(parameter.label,{exact:true});
-     const value=parameter.default+parameter.step;
+     const value=Math.min(parameter.max,parameter.default+parameter.step);
      await control.fill(String(value));await control.press('Tab');await settle(page);
      assert.equal((await stored(page)).chain.at(-1).params[parameter.key],value);
    }
@@ -48,7 +49,11 @@ try {
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no body horizontal overflow');
    assert.ok(await page.evaluate(()=>document.querySelector('footer').getBoundingClientRect().bottom<=innerHeight+1),'footer remains visible');
  }
- await page.screenshot({path:process.argv[4],fullPage:true});
+  await page.evaluate(()=>{const button=document.querySelector('button[aria-label="原音对比"]');button.disabled=false;button.setAttribute('aria-pressed','true');button.textContent='原音 · 点击恢复效果';});
+  const compare=page.locator('button[aria-label="原音对比"]');
+  assert.ok(await compare.evaluate(button=>{const panel=button.closest('.chain-panel'),rect=button.getBoundingClientRect(),bounds=panel.getBoundingClientRect();return rect.left>=bounds.left&&rect.right<=bounds.right&&button.scrollWidth<=button.clientWidth&&button.scrollHeight<=button.clientHeight;}),'pressed compare label stays visible at 390px');
+  await page.screenshot({path:process.argv[4],fullPage:true});
+  await page.evaluate(()=>{const button=document.querySelector('button[aria-label="原音对比"]');button.disabled=true;button.setAttribute('aria-pressed','false');button.textContent='对比原音';});
  await page.emulateMedia({reducedMotion:'reduce'});
  const before=(await stored(page)).chain;
  await beginDrag(page,page.getByRole('button',{name:'添加高通',exact:true}));

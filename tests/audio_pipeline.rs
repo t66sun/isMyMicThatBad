@@ -295,6 +295,84 @@ fn defaults(kind: &str, overrides: &[(&str, f32)]) -> FilterConfig {
     }
     result
 }
+#[test]
+fn bitcrusher_quantizes_holds_and_preserves_dry_input() {
+    let quantized = render(
+        &[defaults(
+            "bitcrusher",
+            &[("bits", 2.0), ("hold", 1.0), ("mix", 100.0)],
+        )],
+        &[0.1, 0.375, -0.375, 1.5, -1.5],
+        3,
+    );
+    assert_eq!(quantized, [0.0, 0.5, -0.5, 1.0, -1.0]);
+
+    let held = defaults(
+        "bitcrusher",
+        &[("bits", 8.0), ("hold", 4.0), ("mix", 100.0)],
+    );
+    let input = [0.1, 0.2, 0.3, 0.4, -0.8, -0.7, -0.6, -0.5, 0.51, 0.0];
+    let whole = render(&[held.clone()], &input, 256);
+    let chunked = render(&[held], &input, 3);
+    assert_eq!(
+        whole, chunked,
+        "sample hold state must survive block boundaries"
+    );
+    assert_eq!(
+        whole,
+        [13.0 / 128.0; 4]
+            .into_iter()
+            .chain([-102.0 / 128.0; 4])
+            .chain([65.0 / 128.0; 2])
+            .collect::<Vec<_>>()
+    );
+
+    let dry = defaults("bitcrusher", &[("bits", 2.0), ("hold", 48.0), ("mix", 0.0)]);
+    assert_eq!(render(&[dry], &input, 3), input);
+}
+
+#[test]
+fn bitcrusher_instances_keep_independent_hold_state() {
+    let mut fast = defaults(
+        "bitcrusher",
+        &[("bits", 2.0), ("hold", 1.0), ("mix", 100.0)],
+    );
+    fast.id = "fast".into();
+    let mut slow = defaults(
+        "bitcrusher",
+        &[("bits", 8.0), ("hold", 4.0), ("mix", 100.0)],
+    );
+    slow.id = "slow".into();
+    let output = render(&[fast, slow], &[0.1, 0.4, 0.9, 0.2, 0.8, 0.1, 0.5, 0.9], 3);
+    assert_eq!(output, [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]);
+}
+
+#[test]
+fn bitcrusher_rejects_values_outside_catalog_bounds() {
+    for (key, value) in [
+        ("bits", 1.0),
+        ("bits", 17.0),
+        ("hold", 0.0),
+        ("hold", 49.0),
+        ("mix", -1.0),
+        ("mix", 101.0),
+    ] {
+        let config = defaults("bitcrusher", &[(key, value)]);
+        assert!(Chain::new(&[config]).is_err(), "accepted {key}={value}");
+    }
+    for (key, value) in [
+        ("bits", 2.0),
+        ("bits", 16.0),
+        ("hold", 1.0),
+        ("hold", 48.0),
+        ("mix", 0.0),
+        ("mix", 100.0),
+    ] {
+        let config = defaults("bitcrusher", &[(key, value)]);
+        assert!(Chain::new(&[config]).is_ok(), "rejected {key}={value}");
+    }
+}
+
 fn rms(samples: &[f32]) -> f32 {
     (samples.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / samples.len() as f64).sqrt() as f32
 }
@@ -542,10 +620,143 @@ fn spectral_chain_delay_can_exceed_the_old_compensation_capacity() {
     }
     assert!(!runner.transitioning());
 }
+
+#[test]
+fn runner_bypass_tracks_latency_changes_and_restores_wet_chain() {
+    use mic_engine::graph::{Graph, Runner};
+    let mut runner = Runner::new(Graph::new(Chain::new(&[]).unwrap()));
+    runner.set_bypassed(true);
+    let input = tone(440.0, 20000);
+    let mut position = 0;
+    let mut output = [0.0; 256];
+    for _ in 0..4 {
+        runner.process(&input[position..position + 256], &mut output);
+        position += 256;
+    }
+
+    let high = Chain::new(&[
+        defaults("pitch", &[]),
+        defaults("gain", &[("gain_db", -6.0206)]),
+    ])
+    .unwrap();
+    let latency = high.latency;
+    assert!(latency > 127);
+    runner.submit(Graph::new(high));
+    for _ in 0..24 {
+        runner.process(&input[position..position + 256], &mut output);
+        position += 256;
+    }
+    assert!(!runner.transitioning());
+    for i in 240..256 {
+        assert!((output[i] - input[position - 256 + i - latency]).abs() < 1e-6);
+    }
+
+    let low = Chain::new(&[defaults("gain", &[("gain_db", -6.0206)])]).unwrap();
+    runner.submit(Graph::new(low));
+    for _ in 0..24 {
+        runner.process(&input[position..position + 256], &mut output);
+        position += 256;
+    }
+    assert!(!runner.transitioning());
+    for i in 240..256 {
+        assert!((output[i] - input[position - 256 + i - latency]).abs() < 1e-6);
+    }
+
+    runner.set_bypassed(false);
+    for _ in 0..4 {
+        runner.process(&input[position..position + 256], &mut output);
+        position += 256;
+    }
+    for i in 240..256 {
+        let dry = input[position - 256 + i - latency];
+        assert!(
+            (output[i] - dry * 0.5).abs() < 1e-5,
+            "wet chain did not resume at {i}"
+        );
+    }
+}
+
+#[test]
+fn runner_bypass_stays_latency_aligned_during_live_filter_edits() {
+    use mic_engine::graph::{Graph, Runner};
+    let initial = defaults("frequency", &[]);
+    assert_eq!(Chain::new(&[initial.clone()]).unwrap().latency, 127);
+    let mut runner = Runner::new(Graph::new(Chain::new(&[initial]).unwrap()));
+    let input = tone(440.0, 1280);
+    let mut output = [0.0; 256];
+    runner.process(&input[..256], &mut output);
+
+    runner.set_bypassed(true);
+    runner.submit(Graph::new(
+        Chain::new(&[defaults("frequency", &[("shift_hz", 100.0)])]).unwrap(),
+    ));
+    let mut compared = vec![0.0; 512];
+    for (x, y) in input[256..768].chunks(256).zip(compared.chunks_mut(256)) {
+        runner.process(x, y);
+    }
+    for i in 480..512 {
+        assert_eq!(
+            compared[i],
+            input[256 + i - 127],
+            "dry comparison lost latency alignment at {i}"
+        );
+    }
+}
+
+#[test]
+fn runner_bypass_crossfades_over_480_samples_in_both_directions() {
+    use mic_engine::graph::{Graph, Runner};
+    let mut runner = Runner::new(Graph::new(
+        Chain::new(&[defaults("gain", &[("gain_db", -6.0206)])]).unwrap(),
+    ));
+    let input = [0.1; 512];
+    let mut output = [0.0; 256];
+    runner.process(&input[..256], &mut output);
+    let wet = 0.1 * 10.0_f32.powf(-6.0206 / 20.0);
+
+    runner.set_bypassed(true);
+    let mut bypassed = [0.0; 512];
+    for (x, y) in input.chunks(256).zip(bypassed.chunks_mut(256)) {
+        runner.process(x, y);
+    }
+    assert!((bypassed[0] - (0.1 + (wet - 0.1) * (479.0 / 480.0))).abs() < 1e-6);
+    assert!(bypassed[479..].iter().all(|sample| *sample == 0.1));
+
+    runner.set_bypassed(false);
+    let mut restored = [0.0; 512];
+    for (x, y) in input.chunks(256).zip(restored.chunks_mut(256)) {
+        runner.process(x, y);
+    }
+    assert!((restored[0] - (0.1 + (wet - 0.1) / 480.0)).abs() < 1e-6);
+    assert!(restored[479..]
+        .iter()
+        .all(|sample| (*sample - wet).abs() < 1e-6));
+}
+
+#[test]
+fn stopped_controller_rejects_bypass_and_reports_unbypassed_status() {
+    let mut controller = mic_engine::audio::Controller::default();
+    assert_eq!(
+        controller.set_bypassed(true).unwrap_err(),
+        "请先开始处理再对比原音"
+    );
+    let status = controller.status();
+    assert!(!status.running);
+    assert!(!status.bypassed);
+}
 #[test]
 fn every_new_filter_retains_state_during_parameter_and_bypass_updates() {
     use mic_engine::graph::{Graph, Runner};
-    for kind in ["gate", "eq", "compressor", "pitch", "formant", "reverb"] {
+    for kind in [
+        "gate",
+        "eq",
+        "compressor",
+        "pitch",
+        "formant",
+        "reverb",
+        "bitcrusher",
+        "tremolo",
+    ] {
         let initial = defaults(kind, &[]);
         let mut changed = initial.clone();
         let key = match kind {
@@ -553,6 +764,8 @@ fn every_new_filter_retains_state_during_parameter_and_bypass_updates() {
             "eq" => "mid_gain_db",
             "compressor" => "ratio",
             "pitch" | "formant" => "semitones",
+            "bitcrusher" => "bits",
+            "tremolo" => "rate_hz",
             _ => "room",
         };
         let value = match kind {
@@ -560,6 +773,8 @@ fn every_new_filter_retains_state_during_parameter_and_bypass_updates() {
             "eq" => 6.0,
             "compressor" => 6.0,
             "pitch" | "formant" => 2.0,
+            "bitcrusher" => 12.0,
+            "tremolo" => 10.0,
             _ => 70.0,
         };
         changed.params.insert(key.into(), value);

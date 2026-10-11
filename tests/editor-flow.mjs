@@ -51,6 +51,27 @@ export async function historyFlow(page) {
   assert.deepEqual((await stored(page)).chain, snapshots[2], 'whole slider gesture undoes in one step');
   await page.getByRole('button', { name: '添加颤音', exact: true }).click(); await settle(page);
   assert.ok(await redo.isDisabled(), 'new edit clears redo');
+  await page.getByRole('button', { name: '添加数字降质', exact: true }).click(); await settle(page);
+  const bitcrusher = page.getByRole('spinbutton', { name: '位深', exact: true });
+  assert.deepEqual((await stored(page)).chain.at(-1).params, { bits: 8, hold: 4, mix: 100 });
+  await bitcrusher.fill('12'); await bitcrusher.press('Enter'); await settle(page);
+  assert.equal((await stored(page)).chain.at(-1).params.bits, 12);
+  await undo.click(); await settle(page);
+  assert.equal((await stored(page)).chain.at(-1).params.bits, 8, 'bitcrusher parameter edit is undoable');
+  await redo.click(); await settle(page);
+  assert.equal((await stored(page)).chain.at(-1).params.bits, 12, 'bitcrusher parameter edit is redoable');
+  await menu(page, (await stored(page)).chain.length - 1, '复制滤镜');
+  await page.getByRole('button', { name: '选择数字降质滤镜', exact: true }).last().click();
+  const hold = page.getByRole('spinbutton', { name: '采样保持', exact: true });
+  await hold.fill('9'); await hold.press('Enter'); await settle(page);
+  const mix = page.getByRole('spinbutton', { name: '混合', exact: true });
+  await mix.fill('75'); await mix.press('Enter'); await settle(page);
+  const bitcrushers = (await stored(page)).chain.slice(-2);
+  assert.notEqual(bitcrushers[0].id, bitcrushers[1].id);
+  assert.deepEqual(bitcrushers.map(node => node.params), [
+    { bits: 12, hold: 4, mix: 100 },
+    { bits: 12, hold: 9, mix: 75 },
+  ], 'bitcrusher copies keep independent parameters');
   const changed = (await stored(page)).chain;
   await page.reload(); await settle(page);
   assert.deepEqual((await stored(page)).chain, changed);
@@ -80,6 +101,9 @@ async function menu(page, index, action) {
 }
 export async function editorFlow(page) {
   await page.getByRole('heading', { name: '声音管线', exact: true }).waitFor();
+  const compare = page.getByRole('button', { name: '原音对比', exact: true });
+  assert.ok(await compare.isDisabled());
+  assert.equal(await compare.getAttribute('aria-pressed'), 'false');
   await raw(page);
   assert.equal(await page.locator('.inspector-empty').count(), 1);
   const chainBox = await page.locator('.chain-viewport').boundingBox();

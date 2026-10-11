@@ -17,7 +17,7 @@ const invoke=(command,args={})=>js((command,args)=>window.__TAURI_INTERNALS__.in
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(fn){for(let i=0;i<50;i++){if(await fn())return;await pause(100);}throw Error('Tray condition timed out');}
 const click=label=>js(label=>document.querySelector('button[aria-label="'+label+'"]').click(),label);
-const tray=action=>execFileSync('pwsh.exe',['-NoProfile','-STA','-File','tests/Tray-Action.ps1','-Action',action],{windowsHide:true,timeout:30000});
+const tray=action=>execFileSync('pwsh.exe',['-NoProfile','-STA','-File','tests/Tray-Action.ps1','-Action',action,'-TargetProcessId',String(pid)],{windowsHide:true,timeout:30000});
 const running=()=>{try{process.kill(pid,0);return true;}catch{return false;}};
 async function launch(){session=(await request('/session','POST',{capabilities:{alwaysMatch:{browserName:'webview2','ms:edgeOptions':{binary}}}})).sessionId;await wait(()=>js(()=>Boolean(window.__TAURI_INTERNALS__&&document.querySelector('.library-card')&&!document.querySelector('.transport').disabled)));pid=Number(execFileSync('powershell.exe',['-NoProfile','-Command',"(Get-Process | Where-Object { $_.Path -eq '"+binary.replaceAll("'","''")+"' }).Id"],{windowsHide:true}).toString().trim());assert.ok(pid>0,'isolated native process exists');}
 async function toggle(){await click('打开设置');const expected=await js(()=>{const input=Array.from(document.querySelectorAll('label')).find(n=>n.textContent==='关闭窗口后进入托盘').querySelector('input');const expected=!input.checked;input.click();return expected;});await wait(()=>js(expected=>Array.from(document.querySelectorAll('label')).find(n=>n.textContent==='关闭窗口后进入托盘').querySelector('input').checked===expected&&!document.querySelector('.transport').disabled,expected));await click('关闭设置');}
@@ -63,4 +63,7 @@ try {
   await click('关闭窗口');await wait(()=>!running());await request('/session/'+session,'DELETE');session=null;
   results.defaultClose=true;results.persistedOption=true;
   await writeFile(resultFile,JSON.stringify(results,null,2));console.log(JSON.stringify(results));
-} finally {if(session)await request('/session/'+session,'DELETE').catch(()=>{});}
+} finally {
+ if(session)await request('/session/'+session,'DELETE').catch(()=>{});
+ if(pid&&running())process.kill(pid);
+}

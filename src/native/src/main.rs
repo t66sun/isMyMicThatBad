@@ -89,6 +89,14 @@ async fn get_status(state: State<'_, NativeState>) -> Result<Status, String> {
     Ok(status)
 }
 #[tauri::command]
+async fn set_bypassed(state: State<'_, NativeState>, bypassed: bool) -> Result<(), String> {
+    state
+        .audio
+        .lock()
+        .map_err(|_| poisoned())?
+        .set_bypassed(bypassed)
+}
+#[tauri::command]
 async fn install_cable(app: tauri::AppHandle) -> Result<String, String> {
     use std::os::windows::process::CommandExt;
     let path = app
@@ -311,6 +319,7 @@ fn main() {
             start_audio,
             stop_audio,
             set_monitoring,
+            set_bypassed,
             get_status,
             install_cable,
             open_cable_site

@@ -30,6 +30,7 @@ pub struct DeviceInfo {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub running: bool,
+    pub bypassed: bool,
     pub monitoring: bool,
     pub input_peak: f32,
     pub output_peak: f32,
@@ -44,6 +45,7 @@ struct Stats {
     stop: AtomicBool,
     ready: AtomicBool,
     monitoring: AtomicBool,
+    bypassed: AtomicBool,
     monitor_epoch: AtomicU64,
     input_peak: AtomicU32,
     output_peak: AtomicU32,
@@ -118,7 +120,9 @@ pub fn list_devices() -> Result<Vec<DeviceInfo>, String> {
 }
 fn find(id: &str, input: bool) -> Result<Device, String> {
     let host = cpal::default_host();
-    let devices: Vec<Device> = if input {
+    let loopback = input && id.starts_with("loopback:");
+    let id = if loopback { &id[9..] } else { id };
+    let devices: Vec<Device> = if input && !loopback {
         host.input_devices().map_err(|e| e.to_string())?.collect()
     } else {
         host.output_devices().map_err(|e| e.to_string())?.collect()
@@ -401,12 +405,14 @@ impl Runtime {
         settings.validate()?;
         let input = find(&settings.input_id, true)?;
         let main = find(&settings.output_id, false)?;
-        if endpoint_name(&input)?.contains("CABLE Output")
-            && endpoint_name(&main)?.contains("CABLE In")
+        if endpoint_id(&input)? == settings.output_id
+            || (endpoint_name(&input)?.contains("CABLE")
+                && endpoint_name(&main)?.contains("CABLE In"))
         {
-            return Err("不能将虚拟线缆回送到自身，请选择真实麦克风".into());
+            return Err("不能将输出回送到自身，请选择不同的输入与输出设备".into());
         }
-        let input_config = configuration(&input, true)?;
+        // WASAPI captures render endpoints in loopback mode for deterministic WAV acceptance.
+        let input_config = configuration(&input, !settings.input_id.starts_with("loopback:"))?;
         let input_rate = input_config.sample_rate();
         let main_config = configuration(&main, false)?;
         let target = (settings.buffer_ms as usize * 48).max(BLOCK);
@@ -539,6 +545,7 @@ impl Runtime {
                         worker_stats.fail(error, false);
                         break;
                     }
+                    runner.set_bypassed(worker_stats.bypassed.load(Ordering::Relaxed));
                     if let Some(graph) = runner.process(&input, &mut processed) {
                         deferred = retire(graph, &retired_sender);
                     }
@@ -670,6 +677,12 @@ impl Controller {
             Ok(())
         }
     }
+    pub fn set_bypassed(&mut self, bypassed: bool) -> Result<(), String> {
+        let runtime = self.runtime.as_ref().ok_or("请先开始处理再对比原音")?;
+        runtime.stats.bypassed.store(bypassed, Ordering::Relaxed);
+        runtime.stats.wake();
+        Ok(())
+    }
     pub fn status(&mut self) -> Status {
         if self
             .runtime
@@ -687,6 +700,7 @@ impl Controller {
             for _ in runtime.retired.try_iter() {}
             Status {
                 running: true,
+                bypassed: runtime.stats.bypassed.load(Ordering::Relaxed),
                 monitoring: runtime.stats.monitoring.load(Ordering::Relaxed),
                 input_peak: f32::from_bits(runtime.stats.input_peak.load(Ordering::Relaxed)),
                 output_peak: f32::from_bits(runtime.stats.output_peak.load(Ordering::Relaxed)),
@@ -699,6 +713,7 @@ impl Controller {
         } else {
             Status {
                 running: false,
+                bypassed: false,
                 monitoring: false,
                 input_peak: 0.0,
                 output_peak: 0.0,

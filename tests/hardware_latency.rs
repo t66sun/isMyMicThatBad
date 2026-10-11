@@ -20,7 +20,16 @@ fn record(
     device: &cpal::Device,
     errors: Arc<Mutex<Vec<String>>>,
 ) -> (cpal::Stream, Consumer<Frame>) {
-    let config = device.default_input_config().unwrap();
+    let config = device
+        .default_input_config()
+        .or_else(|error| {
+            if error.kind() == cpal::ErrorKind::UnsupportedOperation {
+                device.default_output_config()
+            } else {
+                Err(error)
+            }
+        })
+        .unwrap();
     assert_eq!(
         config.sample_format(),
         cpal::SampleFormat::F32,
@@ -32,7 +41,7 @@ fn record(
         "calibration requires both devices at 48 kHz"
     );
     let channels = config.channels() as usize;
-    let (mut producer, consumer) = RingBuffer::new(48000 * 16);
+    let (mut producer, consumer) = RingBuffer::new(48000 * 24);
     let stream = device
         .build_input_stream::<f32, _, _>(
             config.config(),
@@ -55,6 +64,141 @@ fn record(
         )
         .unwrap();
     (stream, consumer)
+}
+
+fn wav_samples(bytes: &[u8]) -> Vec<f32> {
+    assert!(
+        bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WAVE",
+        "stimulus must be a RIFF WAV"
+    );
+    let mut offset = 12;
+    let mut format_valid = false;
+    let mut samples = None;
+    while offset + 8 <= bytes.len() {
+        let size = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let end = offset + 8 + size;
+        let chunk = bytes
+            .get(offset + 8..end)
+            .expect("truncated stimulus WAV chunk");
+        match &bytes[offset..offset + 4] {
+            b"fmt " => {
+                assert!(
+                    chunk.len() >= 16
+                        && chunk[..2] == 1_u16.to_le_bytes()
+                        && chunk[2..4] == 1_u16.to_le_bytes()
+                        && chunk[4..8] == 48000_u32.to_le_bytes()
+                        && chunk[12..14] == 2_u16.to_le_bytes()
+                        && chunk[14..16] == 16_u16.to_le_bytes(),
+                    "stimulus requires mono PCM16 at 48 kHz"
+                );
+                format_valid = true;
+            }
+            b"data" => {
+                assert!(
+                    size > 0 && size % 2 == 0,
+                    "stimulus WAV has invalid samples"
+                );
+                samples = Some(
+                    chunk
+                        .chunks_exact(2)
+                        .map(|sample| {
+                            i16::from_le_bytes(sample.try_into().unwrap()) as f32 / 32768.0
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+            _ => {}
+        }
+        offset = end + size % 2;
+    }
+    assert!(format_valid, "stimulus WAV is missing its format");
+    samples.expect("stimulus WAV is missing its samples")
+}
+
+fn play_stimulus(errors: Arc<Mutex<Vec<String>>>) -> Option<cpal::Stream> {
+    let path = std::env::var_os("MIC_TEST_STIMULUS_WAV")?;
+    let mut samples = wav_samples(&std::fs::read(&path).expect("read stimulus WAV"));
+    let peak = samples
+        .iter()
+        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+    assert!(peak > 0.0, "stimulus WAV is silent");
+    for sample in &mut samples {
+        *sample *= 0.25 / peak;
+    }
+    let id = std::env::var("MIC_TEST_SPEAKER_ID").expect("select physical playback speakers");
+    let speaker = cpal::default_host()
+        .output_devices()
+        .unwrap()
+        .find(|device| device.id().unwrap().to_string() == id)
+        .expect("selected speakers are unavailable");
+    let name = speaker.description().unwrap().name().to_owned();
+    assert!(
+        !name.contains("CABLE"),
+        "stimulus must play through physical speakers"
+    );
+    let config = speaker.default_output_config().unwrap();
+    assert_eq!(
+        config.sample_format(),
+        cpal::SampleFormat::F32,
+        "stimulus playback requires native f32"
+    );
+    assert_eq!(
+        config.sample_rate(),
+        48000,
+        "stimulus playback requires 48 kHz"
+    );
+    let channels = config.channels() as usize;
+    let mut cursor = 0;
+    let stream = speaker
+        .build_output_stream::<f32, _, _>(
+            config.config(),
+            move |data, _| {
+                for frame in data.chunks_exact_mut(channels) {
+                    frame.fill(samples[cursor]);
+                    cursor = (cursor + 1) % samples.len();
+                }
+            },
+            move |error| {
+                if error.kind() != cpal::ErrorKind::Xrun {
+                    errors
+                        .lock()
+                        .unwrap()
+                        .push(format!("stimulus playback: {error}"));
+                }
+            },
+            Some(Duration::from_secs(2)),
+        )
+        .unwrap();
+    println!(
+        "{}",
+        serde_json::json!({"stimulus":path.to_string_lossy(),"speaker":name,"method":"WAV playback; input is explicitly selected by MIC_TEST_INPUT_ID","peak":0.25})
+    );
+    stream.play().unwrap();
+    Some(stream)
+}
+
+#[test]
+fn stimulus_wav_reads_pcm_and_rejects_truncation_or_wrong_format() {
+    let mut wav = Vec::new();
+    wav.extend(b"RIFF");
+    wav.extend(42_u32.to_le_bytes());
+    wav.extend(b"WAVEfmt ");
+    wav.extend(16_u32.to_le_bytes());
+    wav.extend(1_u16.to_le_bytes());
+    wav.extend(1_u16.to_le_bytes());
+    wav.extend(48000_u32.to_le_bytes());
+    wav.extend(96000_u32.to_le_bytes());
+    wav.extend(2_u16.to_le_bytes());
+    wav.extend(16_u16.to_le_bytes());
+    wav.extend(b"data");
+    wav.extend(6_u32.to_le_bytes());
+    for value in [32767_i16, 0, -32768] {
+        wav.extend(value.to_le_bytes());
+    }
+    assert_eq!(wav_samples(&wav), [32767.0 / 32768.0, 0.0, -1.0]);
+    assert!(std::panic::catch_unwind(|| wav_samples(&wav[..wav.len() - 1])).is_err());
+    wav[22] = 2;
+    assert!(std::panic::catch_unwind(|| wav_samples(&wav)).is_err());
 }
 
 fn reduce(mut source: Consumer<Frame>) -> Vec<Frame> {
@@ -115,7 +259,7 @@ fn correlate_at_rate(
 }
 
 fn correlate(reference: &[Frame], cable: &[Frame]) -> Vec<(f64, f64)> {
-    correlate_at_rate(reference, cable, 6000, 0.0)
+    correlate_at_rate(reference, cable, 6000, 10.0_f64.powf(-50.0 / 20.0))
 }
 fn envelope(mut source: Consumer<Frame>) -> Vec<Frame> {
     let mut result = Vec::new();
@@ -297,13 +441,48 @@ fn correlation_finds_known_delay() {
 }
 
 #[test]
+fn microphone_correlation_rejects_quiet_matched_input() {
+    let reference: Vec<_> = (0..15600)
+        .map(|i| Frame {
+            time: i as f64 / 6000.0,
+            value: (i as f32 * 0.1).sin() * 1e-5,
+        })
+        .collect();
+    let cable: Vec<_> = reference
+        .iter()
+        .map(|frame| Frame {
+            time: frame.time + 0.047,
+            value: frame.value,
+        })
+        .collect();
+    assert!(!correlate_at_rate(&reference, &cable, 6000, 0.0).is_empty());
+    assert!(
+        correlate(&reference, &cable).is_empty(),
+        "near-silent input cannot qualify microphone latency"
+    );
+}
+
+#[test]
 #[ignore = "uses real microphone and VB-CABLE; stop other audio senders first"]
 fn microphone_to_cable_p95_is_under_150ms() {
+    measure_input_latency(150.0);
+}
+
+#[test]
+#[ignore = "plays WAV through a WASAPI loopback source and VB-CABLE"]
+fn wav_loopback_to_cable_p95_is_under_200ms() {
+    assert!(std::env::var("MIC_TEST_INPUT_ID")
+        .unwrap()
+        .starts_with("loopback:"));
+    measure_input_latency(200.0);
+}
+
+fn measure_input_latency(budget_ms: f64) {
     let host = cpal::default_host();
     let physical = if let Ok(id) = std::env::var("MIC_TEST_INPUT_ID") {
-        host.input_devices()
+        host.devices()
             .unwrap()
-            .find(|d| d.id().unwrap().to_string() == id)
+            .find(|d| d.id().unwrap().to_string() == id.strip_prefix("loopback:").unwrap_or(&id))
             .expect("requested microphone is unavailable")
     } else {
         host.default_input_device()
@@ -325,6 +504,20 @@ fn microphone_to_cable_p95_is_under_150ms() {
         .unwrap()
         .find(|d| d.description().unwrap().name().contains("CABLE Input"))
         .expect("VB-CABLE render");
+    if let Ok(input_id) = std::env::var("MIC_TEST_INPUT_ID") {
+        if input_id.starts_with("loopback:") {
+            let mut controller = Controller::default();
+            let error = controller
+                .start(&Session {
+                    input_id,
+                    output_id: physical.id().unwrap().to_string(),
+                    ..Session::default()
+                })
+                .unwrap_err();
+            assert!(error.contains("不能将输出回送到自身"));
+            assert!(!controller.status().running);
+        }
+    }
     for chain in [
         vec![],
         vec![
@@ -348,6 +541,7 @@ fn microphone_to_cable_p95_is_under_150ms() {
             "frequency-zero-and-gain"
         };
         let errors = Arc::new(Mutex::new(Vec::new()));
+        let _stimulus = play_stimulus(Arc::clone(&errors));
         let (reference_stream, reference) = record(&physical, Arc::clone(&errors));
         let (cable_stream, received) = record(&cable, Arc::clone(&errors));
         reference_stream.play().unwrap();
@@ -355,14 +549,15 @@ fn microphone_to_cable_p95_is_under_150ms() {
         let mut controller = Controller::default();
         controller
             .start(&Session {
-                input_id: physical.id().unwrap().to_string(),
+                input_id: std::env::var("MIC_TEST_INPUT_ID")
+                    .unwrap_or_else(|_| physical.id().unwrap().to_string()),
                 output_id: output.id().unwrap().to_string(),
                 buffer_ms: 5,
                 chain,
                 ..Session::default()
             })
             .unwrap();
-        std::thread::sleep(Duration::from_secs(12));
+        std::thread::sleep(Duration::from_secs(16));
         let status = controller.status();
         controller.stop();
         drop(reference_stream);
@@ -392,7 +587,10 @@ fn microphone_to_cable_p95_is_under_150ms() {
         );
         let p95 = good[(good.len() * 95).div_ceil(100) - 1];
         println!("Measured p95: {p95:.2} ms");
-        assert!(p95 <= 150.0, "hardware latency exceeds 150 ms: {p95:.2}");
+        assert!(
+            p95 <= budget_ms,
+            "hardware latency exceeds {budget_ms} ms: {p95:.2}"
+        );
     }
 }
 
@@ -450,7 +648,8 @@ fn measure_cable_without_microphone_or_dsp() {
     drop(stream);
     drop(capture);
     assert!(errors.lock().unwrap().is_empty());
-    let results = correlate(&reduce(reference), &reduce(received));
+    // The cable-only probe deliberately generates a sub-speech-level calibration signal.
+    let results = correlate_at_rate(&reduce(reference), &reduce(received), 6000, 0.0);
     let mut good: Vec<_> = results
         .iter()
         .filter(|(_, score)| *score >= 0.5)
@@ -520,12 +719,25 @@ fn envelope_calibration_survives_carrier_and_gain_changes() {
 #[test]
 #[ignore = "requires audible microphone input and VB-CABLE for four new presets"]
 fn new_presets_microphone_to_cable_p95_is_under_200ms() {
+    measure_preset_latency(200.0);
+}
+
+#[test]
+#[ignore = "plays WAV through a WASAPI loopback source and the shared presets"]
+fn wav_presets_to_cable_p95_is_under_250ms() {
+    assert!(std::env::var("MIC_TEST_INPUT_ID")
+        .unwrap()
+        .starts_with("loopback:"));
+    measure_preset_latency(250.0);
+}
+
+fn measure_preset_latency(budget_ms: f64) {
     let host = cpal::default_host();
     let id = std::env::var("MIC_TEST_INPUT_ID").expect("Select the physical microphone explicitly");
     let physical = host
-        .input_devices()
+        .devices()
         .unwrap()
-        .find(|d| d.id().unwrap().to_string() == id)
+        .find(|d| d.id().unwrap().to_string() == id.strip_prefix("loopback:").unwrap_or(&id))
         .expect("selected microphone");
     let cable = host
         .input_devices()
@@ -551,6 +763,7 @@ fn new_presets_microphone_to_cable_p95_is_under_200ms() {
     for preset in presets {
         let filters = preset.chain.clone();
         let errors = Arc::new(Mutex::new(Vec::new()));
+        let _stimulus = play_stimulus(Arc::clone(&errors));
         let (reference_stream, reference) = record(&physical, Arc::clone(&errors));
         let (cable_stream, received) = record(&cable, Arc::clone(&errors));
         reference_stream.play().unwrap();
@@ -601,7 +814,7 @@ fn new_presets_microphone_to_cable_p95_is_under_200ms() {
         }
         let p95 = good[(good.len() * 95).div_ceil(100) - 1];
         println!("{} p95: {p95:.2} ms", preset.name);
-        if p95 > 200.0 || status.underruns != 0 || status.overflows != 0 {
+        if p95 > budget_ms || status.underruns != 0 || status.overflows != 0 {
             failures.push(format!(
                 "{}: p95 {p95:.2} ms, underruns {} -> {}, overflows {}",
                 preset.name, startup.underruns, status.underruns, status.overflows
@@ -639,6 +852,7 @@ fn female_preset_runs_without_underruns() {
         .find(|d| d.description().unwrap().name().contains("CABLE Output"))
         .unwrap();
     let errors = Arc::new(Mutex::new(Vec::new()));
+    let _stimulus = play_stimulus(Arc::clone(&errors));
     let (cable_stream, mut received) = record(&cable, Arc::clone(&errors));
     cable_stream.play().unwrap();
     let mut controller = Controller::default();
