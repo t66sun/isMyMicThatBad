@@ -42,7 +42,7 @@ function EffectCard({ node, definition, index, selected, dragging, sourceId, red
     aria-label={definition.name + '滤镜'}>
     <button id={'select-' + node.id} ref={handleRef} className="card-select" aria-label={'选择' + definition.name + '滤镜'} aria-pressed={selected}
       onClick={() => { if (!dragging) onSelect(node.id); }} onKeyDown={keys}>
-      <FilterIcon type={node.type} /><span className="card-name">{definition.name}</span>
+      <FilterIcon type={node.type} /><span className="card-name" title={definition.name}>{definition.name}</span>
       <Summary node={node} definition={definition} />
       {!node.enabled && <span className="bypass-label">已旁路</span>}
     </button>
