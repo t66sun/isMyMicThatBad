@@ -41,20 +41,49 @@ async fn prepare_ai(state: State<'_, NativeState>) -> Result<(), String> {
 #[tauri::command]
 async fn choose_ai_model(
     state: State<'_, NativeState>,
+    window: tauri::WebviewWindow,
     index: bool,
 ) -> Result<Option<String>, String> {
     if state.audio.lock().map_err(|_| poisoned())?.status().running {
         return Err("切换 AI 模型前请先停止处理".into());
     }
+    let owner = window.hwnd().map_err(|e| e.to_string())?.0 as usize;
     tauri::async_runtime::spawn_blocking(move || {
-        use std::os::windows::process::CommandExt;
-        let filter = if index { "RVC index (*.index)|*.index" } else { "RVC model (*.pth)|*.pth" };
-        let script = format!("[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); Add-Type -AssemblyName System.Windows.Forms; $dialog=[Windows.Forms.OpenFileDialog]::new(); $dialog.Filter='{filter}'; $dialog.CheckFileExists=$true; try {{ if ($dialog.ShowDialog() -eq 'OK') {{ ConvertTo-Json -InputObject $dialog.FileName -Compress }} else {{ 'null' }} }} finally {{ $dialog.Dispose() }}");
-        let result = std::process::Command::new("powershell.exe").args(["-NoProfile","-STA","-Command",&script])
-            .creation_flags(0x08000000).output().map_err(|e| e.to_string())?;
-        if !result.status.success() { return Err("无法打开 AI 模型文件选择窗口".into()); }
-        serde_json::from_slice::<Option<String>>(&result.stdout).map_err(|e| e.to_string())
-    }).await.map_err(|e| e.to_string())?
+        use windows_sys::Win32::UI::Controls::Dialogs::*;
+        let filter: Vec<u16> = if index {
+            "RVC index (*.index)\0*.index\0\0"
+        } else {
+            "RVC model (*.pth)\0*.pth\0\0"
+        }
+        .encode_utf16()
+        .collect();
+        let mut path = vec![0u16; 32768];
+        let mut dialog = OPENFILENAMEW {
+            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+            hwndOwner: owner as _,
+            lpstrFilter: filter.as_ptr(),
+            lpstrFile: path.as_mut_ptr(),
+            nMaxFile: path.len() as u32,
+            Flags: OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR,
+            ..Default::default()
+        };
+        // Keep the native buffers alive until the modal dialog returns.
+        if unsafe { GetOpenFileNameW(&mut dialog) } != 0 {
+            let end = path.iter().position(|c| *c == 0).ok_or("模型路径未终止")?;
+            String::from_utf16(&path[..end])
+                .map(Some)
+                .map_err(|e| e.to_string())
+        } else {
+            let error = unsafe { CommDlgExtendedError() };
+            if error == 0 {
+                Ok(None)
+            } else {
+                Err(format!("无法打开 AI 模型文件选择窗口 ({error})"))
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn list_devices() -> Result<Vec<DeviceInfo>, String> {

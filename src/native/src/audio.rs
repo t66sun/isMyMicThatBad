@@ -255,7 +255,7 @@ impl Reader {
         })
     }
     fn next(&mut self) -> f32 {
-        if self.stats.stop.load(Ordering::Relaxed) {
+        if self.stats.stop.load(Ordering::Relaxed) || !self.stats.ready.load(Ordering::Relaxed) {
             return 0.0;
         }
         if self.monitor {
@@ -538,6 +538,10 @@ impl Runtime {
                         thread::park_timeout(Duration::from_millis(20));
                         continue;
                     }
+                    if filled < converter.input_frames() {
+                        thread::park_timeout(Duration::from_millis(20));
+                        continue;
+                    }
                     let ratio = drift.update(filled, input_target + converter.input_frames());
                     if let Err(error) = converter.set_relative(ratio) {
                         worker_stats.fail(error, false);
@@ -595,6 +599,8 @@ impl Runtime {
             retired,
             configs: settings.chain.clone(),
         };
+        // Start the render driver with silence before capture/output priming, not after it.
+        runtime.output.play().map_err(|e| e.to_string())?;
         runtime.capture.play().map_err(|e| e.to_string())?;
         let deadline = Instant::now() + Duration::from_millis(750);
         while !runtime.stats.ready.load(Ordering::Relaxed)
@@ -612,7 +618,6 @@ impl Runtime {
                 .and_then(|error| error.clone())
                 .unwrap_or_else(|| "未收到麦克风音频，请检查设备和 Windows 麦克风权限".into()));
         }
-        runtime.output.play().map_err(|e| e.to_string())?;
         if settings.monitoring {
             runtime.set_monitoring(true)?;
         }
@@ -810,6 +815,7 @@ mod tests {
     #[test]
     fn starvation_is_one_event_and_reader_recovers_after_refill() {
         let stats = Arc::new(Stats::default());
+        stats.ready.store(true, Ordering::Relaxed);
         let (mut producer, consumer) = RingBuffer::new(2048);
         let mut reader = Reader::new(consumer, 48000, 480, Arc::clone(&stats), false).unwrap();
         for _ in 0..100 {
@@ -832,6 +838,7 @@ mod tests {
     fn monitoring_can_prime_at_the_queue_capacity_limit() {
         for rate in [8000, 44100, 48000, 96000] {
             let stats = Arc::new(Stats::default());
+            stats.ready.store(true, Ordering::Relaxed);
             stats.monitoring.store(true, Ordering::Relaxed);
             let (mut producer, consumer) = RingBuffer::new(4800);
             let mut reader =
@@ -855,6 +862,7 @@ mod tests {
     #[test]
     fn inaudible_output_tails_become_silence_without_muting_voice() {
         let stats = Arc::new(Stats::default());
+        stats.ready.store(true, Ordering::Relaxed);
         let (mut producer, consumer) = RingBuffer::new(4096);
         for _ in 0..1024 {
             producer.push(1e-30).unwrap();
@@ -875,6 +883,7 @@ mod tests {
     fn output_reader_quiet_tail_has_realtime_headroom() {
         for value in [0.1, 0.0, 1e-30, 1e-44] {
             let stats = Arc::new(Stats::default());
+            stats.ready.store(true, Ordering::Relaxed);
             let (mut producer, consumer) = RingBuffer::new(48000 * 4);
             for _ in 0..48000 * 4 {
                 producer.push(value).unwrap();
@@ -892,5 +901,30 @@ mod tests {
                 "output resampling must leave half the real-time budget free"
             );
         }
+    }
+
+    #[test]
+    fn main_reader_waits_for_ready_before_consuming_input() {
+        let stats = Arc::new(Stats::default());
+        stats.ready.store(false, Ordering::Relaxed);
+        let (mut producer, consumer) = RingBuffer::new(2048);
+        let mut reader = Reader::new(consumer, 48000, 0, Arc::clone(&stats), false).unwrap();
+        for _ in 0..1024 {
+            producer.push(0.1).unwrap();
+        }
+        let queued = reader.source.slots();
+
+        for _ in 0..BLOCK {
+            assert_eq!(reader.next(), 0.0);
+        }
+        assert_eq!(reader.source.slots(), queued);
+        assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
+
+        stats.ready.store(true, Ordering::Relaxed);
+        for _ in 0..BLOCK {
+            reader.next();
+        }
+        assert!(reader.source.slots() < queued);
+        assert_eq!(stats.underruns.load(Ordering::Relaxed), 0);
     }
 }

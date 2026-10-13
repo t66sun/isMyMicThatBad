@@ -29,6 +29,7 @@ rtrb = "0.3"
 rubato = "0.16"
 biquad = "0.6"
 signalsmith-stretch = "=0.1.3"
+windows-sys = { version = "0.61", features = ["Win32_UI_Controls_Dialogs"] }
 
 [features]
 custom-protocol = ['tauri/custom-protocol']

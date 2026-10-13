@@ -33,7 +33,7 @@ try {
     }
     $acceptance = Get-Content -LiteralPath 'research/audio-acceptance/artifacts/delivery-acceptance.json' -Raw | ConvertFrom-Json
     if ($acceptance.version -ne $version -or $acceptance.status -notin @('passed','passed_with_accepted_limitations') -or $acceptance.binary_sha256 -ne (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Executable and version must match verified hardware/UI build' }
-    if ($acceptance.microphone.status -ne 'passed' -or $acceptance.model_picker.status -ne 'passed') { throw 'Real microphone and model file-picker acceptance must both pass before formal packaging' }
+    if ($acceptance.microphone.status -notin @('passed','passed_with_accepted_latency') -or $acceptance.model_picker.status -ne 'passed') { throw 'Real microphone stability and model file-picker acceptance must both pass; explicitly accepted latency may exceed its target before formal packaging' }
     [void][System.IO.Directory]::CreateDirectory($destination)
     $record = [ordered]@{project='isMyMicThatBad';status='pending';version=$version;tag=$tag;commit=$commit;created_at=[datetime]::UtcNow.ToString('o');completed_at=$null;hardware_acceptance=$acceptance;files=@();error=$null}
     function Write-Manifest {

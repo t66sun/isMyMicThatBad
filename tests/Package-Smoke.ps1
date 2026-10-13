@@ -33,7 +33,7 @@ $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 if ($manifest.project -ne 'isMyMicThatBad' -or $manifest.status -ne 'complete') { throw 'release.json must describe a completed isMyMicThatBad release.' }
 $acceptance = $manifest.hardware_acceptance
 if ($acceptance.version -ne $manifest.version -or $acceptance.status -notin @('passed', 'passed_with_accepted_limitations')) { throw 'release.json hardware acceptance must match this release version and have an accepted status.' }
-if ($acceptance.microphone.status -ne 'passed' -or $acceptance.model_picker.status -ne 'passed') { throw 'Real microphone and model file-picker acceptance must both pass.' }
+if ($acceptance.microphone.status -notin @('passed','passed_with_accepted_latency') -or $acceptance.model_picker.status -ne 'passed') { throw 'Real microphone stability and model file-picker acceptance must both pass; explicitly accepted latency may exceed its target.' }
 $archiveRecord = @($manifest.files | Where-Object { $_.path -eq (Split-Path -Leaf $archiveFullPath) } | Select-Object -First 1)
 if ($archiveRecord.Count -ne 1) { throw 'release.json has no file record for this ZIP.' }
 $archiveInfo = Get-Item -LiteralPath $archiveFullPath

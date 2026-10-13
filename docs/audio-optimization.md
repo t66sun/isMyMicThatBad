@@ -1,6 +1,6 @@
 # Audio latency follow-up
 
-Qualified targets are p95 ≤150 ms for the raw/frequency-zero-gain calibration and ≤200 ms for the four new presets. The earlier 120 ms and 80 ms goals remain deferred. Current measurements and limitations are in [the user guide](user-guide.md#设备与缓冲); v0.3.2 inherits v0.3.0 hardware qualification without remeasurement.
+Qualified targets are p95 ≤150 ms for the raw/frequency-zero-gain calibration and ≤200 ms for the four new presets. The earlier 120 ms and 80 ms goals remain deferred. Current measurements and limitations are in [the user guide](user-guide.md#设备与缓冲). For v0.4.0, the user explicitly accepted exceeding these latency targets in favor of stable audio; the current measurements are not a latency-target pass.
 
 ## Constraints to preserve
 
@@ -26,3 +26,5 @@ With the qualified microphone/cable configuration above, three consecutive optim
 | 5 | Profile sinc conversions and long chains before changing resampling quality or filter length. | CPU savings, frequency response, independent-clock stability and audible comparisons. |
 
 Full stability and manual voice-naturalness assessment remain deferred. Hardware results exclude chat-app buffering, other devices and arbitrary 64-card chains. Preserve local raw measurements and completed release packages as evidence.
+
+The v0.4.0 release starts render with silence before capture and retains the three-period FIFO and additional startup reserve. Readers wait for priming, and input-clock correction samples only complete input blocks. Final physical calibration, 60-second female-preset playback and 10-second silence checks passed with zero application underruns/overflows. Full 30-minute and subjective checks remain deferred.
