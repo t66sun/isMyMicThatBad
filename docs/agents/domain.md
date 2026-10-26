@@ -1,5 +1,7 @@
 # Domain Docs
 
+English | [中文](domain_zh.md)
+
 ## Layout
 
 Single-context: `GLOSSARY.md` at the repo root and ADRs under `docs/adr/`.

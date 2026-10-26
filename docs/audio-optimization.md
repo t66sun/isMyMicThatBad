@@ -1,6 +1,8 @@
 # Audio latency follow-up
 
-Qualified targets are p95 ≤150 ms for the raw/frequency-zero-gain calibration and ≤200 ms for the four new presets. The earlier 120 ms and 80 ms goals remain deferred. Current measurements and limitations are in [the user guide](user-guide.md#设备与缓冲). For v0.4.0, the user explicitly accepted exceeding these latency targets in favor of stable audio; the current measurements are not a latency-target pass.
+English | [中文](audio-optimization_zh.md)
+
+Qualified targets are p95 ≤150 ms for the raw/frequency-zero-gain calibration and ≤200 ms for the four new presets. The earlier 120 ms and 80 ms goals remain deferred. Current measurements and limitations are in [the user guide](user-guide.md#devices-and-buffering). For v0.4.0, the user explicitly accepted exceeding these latency targets in favor of stable audio; the current measurements are not a latency-target pass.
 
 ## Constraints to preserve
 

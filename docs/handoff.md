@@ -1,0 +1,17 @@
+# Handoff
+
+English | [中文](handoff_zh.md)
+
+2026-10-13, current branch `master`. The user confirmed stability first and accepted latency overruns with honest delivery.
+
+- The final audio changes are only: start output silently, do not consume the queue before ready, and update the clock only with complete input blocks. The original three periods and startup reserve remain; experimental total-queue feedback and gain changes were reverted.
+- Real Intel microphone and VB-CABLE: original 176.43 ms, frequency-zero/gain 181.05 ms, Female 221.88 ms, Blown mic 176.70 ms, Broadcast 171.66 ms, Ethereal 218.32 ms. Every scenario had zero application underruns/overflows; Female 60 seconds and 10 seconds of silence passed. Original/gain exceed 150 ms and Female/Ethereal exceed 200 ms; all were delivered under the user's explicit latency approval, and driver startup notifications remain.
+- 43 Rust tests, 13 frontend tests, TypeScript and the optimized Windows build passed. Real Chinese/space path model and index import, cancel and persistence passed; the final binary recheck opened the native dialog but desktop automation activation failed, noted in the acceptance record with the same model-selection source test baseline.
+- Final exe SHA-256: `e14339c6a3d28047dbfb1ed18f29367544e0b07a88efa52cf25282f361abca12`. The personal six-card chain and device settings were preserved; the temporary Realtek test volume was restored to 0.
+- A standalone AI ZIP was produced: `release/v0.4.0/isMyMicThatBad-v0.4.0-portable-x64.zip` (3,783,557,910 bytes), source commit `64e0f3ad79d01dffcf7cd0e674f71ca83dae2164`; SHA-256 `974d223fc43d1d65039c9e385c6fc28720406450d4fb8edcc8edc8abfb5a4076`. Independent extraction migration and package validation passed, packaged CUDA inference passed (131.81 ms per block, non-zero converted audio), and the embedded worker matches the source.
+- The AI path was considered passed and delivered directly under the user's explicit 2026-10-13 instruction; no more tests or buffer changes. Existing preview runs passed; a later extracted-package live recheck produced one "AI inference fell behind real-time audio" protection stop, retained as an observation and not described as a long-term stability pass. AI buffering stays at 520 ms.
+- Archived: the 30-minute long test, subjective timbre listening, final model dialog recheck and follow-up investigation of the AI protection stop. The user explicitly asked not to run them; handle them when a future task raises them, not as current TODOs.
+- GitHub v0.4.0 published the non-AI portable package (6,371,976 bytes) without the AI environment, models or personal settings; verified the archive has no `data/` entries and the executable matches the acceptance SHA-256 above. The large AI package stays local and is not uploaded.
+- Directory cleanup: deleted historical releases, duplicate AI extraction/packaging environments, AI download caches and generated Tauri/Rust build directories; kept the current two archives, personal preview settings, one usable AI environment, source, test records and necessary toolchains. The first rebuild generates build caches.
+- TODO is cleared. For a new task after delivery, rewrite `TODO.md`.
+- Logs: `research/audio-acceptance/artifacts/physical-stable-*-20261013.log`, `final-stable-build-20261013.log`, `delivery-acceptance.json`. Failed experiment logs remain and are not counted as passing evidence.

@@ -62,7 +62,7 @@ try {
                 Copy-Item -LiteralPath "$AiRuntimePath/$name" -Destination "$staging/data/ai/$name" -Recurse -Force
             }
         }
-        $guide = [System.IO.File]::ReadAllText("$taskRoot/docs/user-guide.md").Replace('../research/audio-acceptance/README.md','AUDIO-ACCEPTANCE.md')
+        $guide = [System.IO.File]::ReadAllText("$taskRoot/docs/user-guide_zh.md").Replace('../research/audio-acceptance/README.md','AUDIO-ACCEPTANCE.md') -replace '(?m)^\[English\]\([a-z-]+\.md\)[^\r\n]*\r?\n\r?\n',''
         [System.IO.File]::WriteAllText("$staging/README.md",$guide,[System.Text.UTF8Encoding]::new($false))
         $hardware = @"
 # $tag audio and UI acceptance
@@ -79,7 +79,7 @@ $($acceptance | ConvertTo-Json -Depth 20)
 ~~~
 "@
         [System.IO.File]::WriteAllText("$staging/AUDIO-ACCEPTANCE.md",$hardware,[System.Text.UTF8Encoding]::new($false))
-        $optimization = [System.IO.File]::ReadAllText("$taskRoot/docs/audio-optimization.md").Replace('user-guide.md','README.md')
+        $optimization = [System.IO.File]::ReadAllText("$taskRoot/docs/audio-optimization_zh.md").Replace('user-guide_zh.md','README.md') -replace '(?m)^\[English\]\([a-z-]+\.md\)[^\r\n]*\r?\n\r?\n',''
         [System.IO.File]::WriteAllText("$staging/AUDIO-OPTIMIZATION.md",$optimization,[System.Text.UTF8Encoding]::new($false))
         $portablePath = "$destination/isMyMicThatBad-$tag-portable-x64.zip"
         Add-Type -AssemblyName System.IO.Compression.FileSystem

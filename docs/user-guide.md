@@ -1,67 +1,69 @@
-# isMyMicThatBad 使用说明
+# isMyMicThatBad user guide
 
-## 开始使用
+English | [中文](user-guide_zh.md)
 
-1. 将便携 ZIP 解压到可写目录，运行 isMyMicThatBad.exe。此版只提供便携包。
-2. ZIP 包含应用所需的微软 C++ 运行库，请保留它们与程序在同一目录。界面依赖系统 WebView2。缺少时从 https://developer.microsoft.com/microsoft-edge/webview2/ 安装 Evergreen Runtime。
-3. 点击标题栏齿轮打开设置。未安装 VB-CABLE 时，点击“安装随包附带的 VB-CABLE”，在官方安装窗口操作并允许管理员提示，然后重启 Windows。
-4. 在设置中，输入选择真实麦克风，输出选择 CABLE Input；聊天软件的麦克风选择 CABLE Output。
-5. 点击“开始处理”。耳机监听默认关闭，开启前选择不同于主输出的耳机设备。
+## Getting started
 
-portable 只表示本应用无需安装；VB-CABLE 仍需作为系统驱动安装。便携包保留官方 VB-CABLE 文件。VB-CABLE 是 VB-Audio 的 Donationware，欢迎捐赠；来源：https://vb-audio.com/Cable/ 。分发说明：https://vb-audio.com/Services/licensing.htm 。
+1. Extract the portable ZIP into a writable directory and run `isMyMicThatBad.exe`. This release is portable only.
+2. The ZIP includes the Microsoft C++ runtime libraries the app needs; keep them next to the executable. The interface requires system WebView2. If it is missing, install the Evergreen Runtime from https://developer.microsoft.com/microsoft-edge/webview2/.
+3. Click the gear in the title bar to open settings. If VB-CABLE is not installed, click "Install the bundled VB-CABLE", complete the official installer and allow the administrator prompt, then restart Windows.
+4. In settings, select the real microphone as input and CABLE Input as output; select CABLE Output as the microphone in the chat application.
+5. Click "Start processing". Headphone monitoring is off by default; before enabling it, select a headphone device different from the main output.
 
-## 窗口与托盘
+Portable only means the app needs no installation; VB-CABLE is still a system driver. The portable package keeps the official VB-CABLE files. VB-CABLE is Donationware from VB-Audio; donations are welcome. Source: https://vb-audio.com/Cable/. Distribution terms: https://vb-audio.com/Services/licensing.htm.
 
-设置中的“关闭窗口后进入托盘”默认关闭；开启后，点击关闭或按 Alt+F4 隐藏窗口，音频继续处理。单击灰白波形托盘图标恢复窗口，也可右键选择“显示窗口”。右键菜单的“开启处理”有勾选时表示正在处理，再点击即可停止；窗口与托盘共享处理状态，开启失败会恢复窗口显示原因。右键选择“退出”停止音频并完全退出。这个选项会随配置保存，旧配置保持关闭窗口即退出的行为。
+## Window and tray
 
-应用、标题栏和托盘使用统一的灰白波形图标。
+"Close window to tray" in settings is off by default. When it is on, clicking close or pressing Alt+F4 hides the window and audio keeps processing. Click the grey-white waveform tray icon to restore the window, or right-click and choose "Show window". The "Start processing" item is checked while processing; click it again to stop. Window and tray share processing state, and a failed start restores the window with the reason. Right-click "Quit" stops audio and exits completely. The option is saved with the configuration; older configurations keep the close-to-quit behavior.
 
-## 卡片管线
+The app, title bar and tray use the same grey-white waveform icon.
 
-从上方滤镜库拖入滤镜或点击添加。也可点击管线中某个位置的加号，再点击上方滤镜插入该位置。卡片从左到右处理；拖动卡片的标题或空白区域排序。拖动时先预览位置，松手后提交；按 Esc 或放到管线外取消。卡片较多时在管线上滚轮横向浏览，拖动到左右边缘会自动滚动。
+## Card pipeline
 
-滤镜库保持单排，可用左右按钮、触控板横向手势或 Tab 键浏览所有滤镜。卡片只显示主要参数；底部参数区可滚动查看完整控制项。
+Drag a filter from the library above, or click to add one. You can also click the plus at a position in the chain and then click a filter above to insert it there. Cards process left to right; drag a card's title or empty area to reorder. Dragging previews the position first and commits on release; press Esc or drop outside the chain to cancel. With many cards, scroll horizontally over the chain; dragging to the left or right edge scrolls automatically.
 
-点击卡片，在底部参数区调节滑块或输入数值。电源按钮旁路滤镜；“⋯”菜单提供向前/向后移动、复制和删除。选择卡片后按 Alt+左右方向键排序，也保留 Alt+上下方向键；空格或 Enter 选中卡片。同一滤镜可重复使用，复制后的参数独立。删除选中卡片后选中相邻卡片，空管线直接输出原音。
+The filter library stays on one row; use the left and right buttons, a touchpad horizontal gesture or Tab to browse all filters. Cards show only their main parameters; scroll the parameter area below for the full controls.
 
-管线标题旁提供撤销和重做按钮，也可按 Ctrl+Z 撤销、Ctrl+Y 或 Ctrl+Shift+Z 重做。增删、排序、旁路、参数及预设切换都可撤销，一次滑块拖动算一次修改；输入框保留自身的文字撤销。新修改会清除重做记录，最近 100 次修改只保存在当前窗口内，重启或重新载入后清空。撤销后的管线照常自动保存并实时更新音频。
+Click a card and adjust sliders or enter values in the parameter area below. The power button bypasses the filter; the "⋯" menu moves it forward or backward, copies it or deletes it. With a card selected, Alt+Left/Right reorders it; Alt+Up/Down still works. Space or Enter selects a card. The same filter can be used repeatedly; copies have independent parameters. Deleting the selected card selects a neighbour, and an empty chain outputs the original microphone signal.
 
-频率平移按固定 Hz 加减每个频率，会产生金属或不自然音色；音高移位按半音升降调并保持共振峰，共振峰移位独立调整音色。标题栏预设菜单提供原音、金属音、电话音、女声、炸麦、广播声、空灵声和“保存当前管线”；自定义预设可命名加载，在设置中删除。重启恢复设置但不会自动开始采集。
+Undo and redo buttons sit beside the chain title; Ctrl+Z undoes and Ctrl+Y or Ctrl+Shift+Z redoes. Adding, removing, reordering, bypassing, parameter changes and preset switches are all undoable; one slider drag counts as one change, while text inputs keep their own text undo. A new change clears the redo history; the last 100 changes live only in the current window and clear on restart or reload. Undone chains still autosave and update audio in real time.
 
-噪声门用于停顿间的底噪控制，不会持续消除说话时的噪声。失真的“削波”在软饱和与硬削波间调整，0% 保留旧效果。相邻的音高／共振峰卡片共用分析，以减少延迟。
+Frequency shift adds or subtracts a fixed number of Hz from every frequency, producing metallic or unnatural timbres; pitch shift moves in semitones and preserves formants, while formant shift adjusts timbre independently. The title-bar preset menu offers Original, Metallic, Telephone, Female, Blown mic, Broadcast, Ethereal and "Save current chain"; custom presets can be named, loaded and deleted in settings. Restarting restores settings but never starts capture automatically.
 
-颤音（Tremolo）让音量周期起伏：速度可调 0.1–20 Hz，深度可调 0–100%。0% 深度保持原音，100% 深度在原音量与静音间变化；它不改变音高，也不增加算法延迟。
+The noise gate controls the noise floor between phrases; it does not continuously remove noise while you speak. Distortion's "clip" control moves between soft saturation and hard clipping; 0% keeps the previous behavior. Adjacent pitch/formant cards share analysis to reduce latency.
 
-数字降质（Bitcrusher）可调位深 2–16 bit、采样保持 1–48 样本和混合 0–100%。位深越低，颗粒越粗；保持越长，更新采样越慢（48 kHz 下保持 4 样本相当于每秒更新 12000 次）。处理部分在 ±1 内量化，混合 0% 保留原音；它不增加算法延迟，也不改变设备采样率。
+Tremolo makes volume rise and fall periodically: rate is adjustable from 0.1–20 Hz and depth from 0–100%. 0% depth keeps the original volume; 100% varies between the original volume and silence. It changes neither pitch nor algorithmic latency.
 
-AI 变声（RVC）首版每条管线最多一张卡片，可与传统滤镜排序、旁路和原音对比配合使用。先添加 AI 卡片，在参数区点击“准备 AI 环境”；首次下载数 GB 的隔离 Python、CUDA PyTorch、基础模型和测试音色，完成后可离线运行，音频不上传。附带完整 AI 环境的个人便携包解压后即可使用已准备好的环境。环境位于配置目录的 `ai` 子目录，准备日志为 `ai/setup.log`，推理错误日志为 `ai/worker.log`。首次启动会载入模型并预热，可能需要数十秒，请等待“正在处理”。
+Bitcrusher adjusts bit depth from 2–16 bit, sample hold from 1–48 samples and mix from 0–100%. Lower bit depth sounds coarser; longer hold updates samples more slowly (at 48 kHz, holding 4 samples updates 12,000 times per second). The processed signal is quantized within ±1; 0% mix keeps the original. It adds no algorithmic latency and does not change the device sample rate.
 
-默认测试音色由 [Saisho Utane](https://huggingface.co/Saisho-Utane/Saisho-Model-RVC) 创建，使用 CC BY 4.0 许可，演示或发布使用结果时请保留作者署名。可导入 RVC v1/v2 `.pth` 模型及可选 `.index` 索引；模型与索引路径随卡片、预设和撤销记录保存，更换模型或索引前需停止处理。没有索引时跳过检索，索引强度不会产生效果。AI 参数包括音高、共振峰、索引强度与音量包络混合；卡片旁路时仍保留推理状态。模型加载失败、显存不足、推理中断或赶不上实时音频时，停止处理并提示错误，不自动回退到原音。
+AI voice conversion (RVC) allows at most one card per chain in the first release and works with traditional filters, reordering, bypass and original-audio comparison. Add the AI card first and click "Prepare AI environment" in the parameter area; the first run downloads several GB of isolated Python, CUDA PyTorch, base models and a test voice, after which it runs offline; audio is never uploaded. A personal portable package with the full AI environment works immediately after extraction. The environment lives in the `ai` subdirectory of the configuration directory, with preparation logs in `ai/setup.log` and inference error logs in `ai/worker.log`. The first start loads the model and warms up, which can take tens of seconds; wait for "Processing".
 
-AI 以 260 ms 块推理，管线预留的算法延迟为 520 ms，设备与虚拟线缆缓冲另计。2026-10-12 使用 RTX 2050、默认 Saisho 模型、Realtek WAV 数字回环输入和 VB-CABLE 输出，自动校准测得端到端 p95 742.17 ms，33 个语音包络窗口中 31 个成功匹配。实时参数修改、重排、原音对比及移除 AI 的六个连续阶段均无应用欠载、溢出或驱动中断通知。此结果覆盖数字回环链路；AI 物理麦克风延迟尚未校准，主观音色试听按用户交付范围延期。
+The default test voice was created by [Saisho Utane](https://huggingface.co/Saisho-Utane/Saisho-Model-RVC) under CC BY 4.0; keep the author attribution when demonstrating or publishing results. RVC v1/v2 `.pth` models and optional `.index` indexes can be imported; model and index paths persist with cards, presets and undo history, and processing must stop before changing either. Without an index, retrieval is skipped and index strength has no effect. AI parameters include pitch, formant, index strength and volume-envelope mix; bypassing the card keeps inference state. Model load failure, out of memory, interrupted inference or inference falling behind real-time audio stops processing with an error; there is no automatic fallback to the original voice.
 
-开始处理后，点击声音管线标题旁的“对比原音”，可一键切换原音与处理后声音，同时影响虚拟麦克风输出和耳机监听。按钮按下及标题栏“原音对比中”表示正在输出原音，点击再次恢复效果。切换平滑且保留管线参数、旁路状态和撤销历史；原音补偿到相同算法延迟，滤镜继续运行以保留尾音与内部状态。对比状态不保存，停止、设备故障或重新启动后恢复效果输出。
+AI processes 260 ms blocks, and the chain reserves 520 ms of algorithmic latency, plus device and virtual-cable buffering. On 2026-10-12, with an RTX 2050, the default Saisho model, Realtek WAV digital loopback input and VB-CABLE output, automatic calibration measured an end-to-end p95 of 742.17 ms, with 31 of 33 voice-envelope windows matched. Six consecutive phases covering live parameter changes, reordering, original-audio comparison and removing the AI card showed no application underruns, overflows or driver-disconnect notifications. This covers the digital loopback path; AI latency over a physical microphone has not been calibrated, and subjective voice listening is deferred by the user's delivery scope.
 
-带 portable.marker 的便携包配置位于程序旁边的 data/settings.json；没有该标记时使用 %APPDATA%/com.t66sun.ismymicthatbad/settings.json。配置损坏时保留 settings.corrupt-*.json，目录不可写时显示保存错误，不静默丢失旧配置。选中卡片和拖动预览不会写入配置。
+After processing starts, click "Compare original" beside the sound-chain title to switch between original and processed audio for both the virtual microphone output and headphone monitoring. The pressed button and the title-bar "Original comparison" indicate original output; click again to restore effects. Switching is smooth and preserves chain parameters, bypass state and undo history; the original is compensated to the same algorithmic latency and filters keep running to preserve tails and internal state. Comparison state is not saved; stopping, a device failure or a restart restores effect output.
 
-旧失真卡片及用户预设自动补上 0% 削波，升级前的原配置保存在 settings.pre-v0.3-*.json。无法备份时停止升级和自动保存，以保留原文件。
+A portable package with `portable.marker` keeps settings in `data/settings.json` beside the executable; without the marker it uses `%APPDATA%/com.t66sun.ismymicthatbad/settings.json`. Corrupt settings are preserved as `settings.corrupt-*.json`; an unwritable directory shows a save error instead of silently losing the old configuration. Selecting a card and drag previews never write configuration.
 
-## 设备与缓冲
+Older distortion cards and user presets are automatically given 0% clip, and the pre-upgrade configuration is saved as `settings.pre-v0.3-*.json`. If backup fails, the upgrade and autosave stop so the original file survives.
 
-运行时更换设备需要先停止。监听设备出错时关闭监听，主输出保持运行；主输入或输出出错时停止处理并保留卡片配置。若发生断音，提高“缓冲目标”后重新开始，并检查 Windows 音频格式及 VB-CABLE 控制面板。
+## Devices and buffering
 
-内部处理为 48 kHz 单声道，按设备实际格式重采样。频移滤镜有算法延迟；运行中删除滤镜后保留已有延迟补偿，停止/重启会重新计算。首版验收目标调整为指定测试链路 p95 ≤150 ms；64 张卡片是配置上限，不承诺任意长链都达到这一目标。
+Stop processing before changing devices at runtime. If the monitoring device fails, monitoring turns off and the main output keeps running; if the main input or output fails, processing stops and the chain configuration is preserved. If audio drops, raise "Buffer target", restart and check the Windows audio format and the VB-CABLE control panel.
 
-新配置的缓冲目标默认 5 ms，已有配置保持原值。缓冲目标不是端到端延迟。欠载计数记录输出队列断供的事件，溢出记录丢弃的样本，设备中断记录驱动报告的短暂断流；这些通知不会被误当成设备断开。
+Internal processing is mono at 48 kHz, resampled from and to the device format. The frequency-shift filter has algorithmic latency; deleting it while running keeps the existing delay compensation, while stop/start recalculates it. The first-release acceptance target is p95 ≤150 ms on the specified test path; 64 cards is the configuration limit, and arbitrary long chains are not promised to reach it.
 
-v0.3 本轮验收：原音 p95 138.66 ms，零频移／增益 141.91 ms；女声 180.96 ms、炸麦 149.31 ms、广播声 136.57 ms、空灵声 188.21 ms。达到旧校准链路 ≤150 ms、新预设 ≤200 ms 的阶段目标。使用 Intel 内置麦克风、VB-CABLE 3072 samples／48000 Hz、5 ms 缓冲、监听关闭；其他设备和聊天软件的额外缓冲不在本次结果内。
+New configurations default to a 5 ms buffer target; existing configurations keep their value. Buffer target is not end-to-end latency. Underrun counts record output-queue starvation, overflow records dropped samples, and device interruptions record brief driver-reported dropouts; these notifications are not mistaken for a disconnected device.
 
-v0.3 的女声 14 秒短测曾出现欠载。当前源码增加输出与启动预留，并将输出重采样前不可听的极小尾音归零，避免其拖慢回调。同一设备配置下，三次连续的 10 秒启动测试均无应用欠载或溢出；后续长测在 20 分 30 秒后按用户要求停止，已记录区间内两项计数均为 0，不计作完整 30 分钟验收。驱动短暂中断通知仍有记录，端到端延迟未复测；增加预留可能略增延迟，上方历史结果不代表当前源码的重新验收。女声音色尚未人工试听，可结合自己的声线调整音高与共振峰参数。
+v0.3 acceptance: Original p95 138.66 ms, frequency-zero/gain 141.91 ms; Female 180.96 ms, Blown mic 149.31 ms, Broadcast 136.57 ms, Ethereal 188.21 ms. This met the older calibration path's ≤150 ms and the new presets' ≤200 ms stage targets, using the Intel built-in microphone, VB-CABLE 3072 samples/48000 Hz, a 5 ms buffer and monitoring off; extra buffering in other devices and chat applications is outside these results.
 
-本轮实测使用 Intel 阵列麦克风；若默认输入是没有实际声音的 USB 设备，请在设置中手动选择有输入电平的麦克风。
+The v0.3 female preset's 14-second short test once underran. Current source adds output and startup reserves and zeroes inaudible tiny tails before output resampling so they cannot slow the callback. Under the same device configuration, three consecutive 10-second start tests showed no application underruns or overflows; the follow-up long run was stopped at the user's request after 20 minutes 30 seconds, with both counters at 0 for the recorded interval, and does not count as a completed 30-minute acceptance. Brief driver-interruption notifications are still recorded, end-to-end latency was not remeasured, and the added reserve may slightly increase latency; the historical results above do not represent a new acceptance of current source. The female timbre has not been auditioned; adjust pitch and formant to your own voice.
 
-2026-10-12 自动 WAV 复测使用 Realtek 播放端的 WASAPI 数字回环输入、VB-CABLE 输出、5 ms 缓冲和关闭监听。原音 p95 173.27 ms，零频移／增益 176.11 ms，女声 203.28 ms；颤音 176.23 ms、数字降质 172.36 ms。原有四组预设及两种新滤镜均通过数字回环链路的阶段检查，无应用欠载或溢出；个别启动阶段记录到驱动中断通知。女声连续运行 60 秒无应用欠载、溢出或驱动中断通知。数字回环包含额外的 Windows 播放与捕获缓冲，采用原音 ≤200 ms、预设 ≤250 ms 的独立预算；这些结果不替代物理麦克风链路原音 ≤150 ms、预设 ≤200 ms 的验收。
+This measurement used the Intel array microphone; if the default input is a USB device with no actual signal, select a microphone with input level manually in settings.
 
-2026-10-13 的最终 v0.4 稳定性验收使用扬声器播放测试语音、Intel 阵列麦克风收音与 VB-CABLE 输出，5 ms 缓冲、监听关闭。原音 p95 176.43 ms、零频移／增益 181.05 ms；女声 221.88 ms、炸麦 176.70 ms、广播声 171.66 ms、空灵声 218.32 ms。各场景均有至少 26 个有效匹配窗口，应用欠载与溢出均为 0；女声连续 60 秒和静音 10 秒也通过。驱动启动中断通知仍保留，计数在预设运行中不增长。原音与零频移／增益超过 150 ms，女声与空灵声超过 200 ms；用户明确选择稳定性优先，允许延迟超标并如实交付，因此本版不宣称达到原延迟目标。输出驱动先以静音启动，完成预填前不消费音频；缺少完整输入块时不更新时钟控制。
+The 2026-10-12 automated WAV retest used WASAPI digital loopback input from the Realtek playback side, VB-CABLE output, a 5 ms buffer and monitoring off. Original p95 173.27 ms, frequency-zero/gain 176.11 ms, Female 203.28 ms; Tremolo 176.23 ms, Bitcrusher 172.36 ms. The four original presets and both new filters passed the digital-loopback stage checks with no application underruns or overflows; a few startup phases recorded driver-interruption notifications. The female preset ran continuously for 60 seconds with no application underruns, overflows or driver-interruption notifications. Digital loopback includes extra Windows playback and capture buffering, so it uses a separate budget of original ≤200 ms and presets ≤250 ms; these results do not replace the physical-microphone acceptance of original ≤150 ms and presets ≤200 ms.
 
-源码目录中运行 `./tests/Run-AudioAcceptance.ps1` 可自动生成并循环播放一段语音 WAV，日志保存在 `research/audio-acceptance/artifacts`。也可用 `-StimulusWavPath` 指定 48 kHz、单声道、PCM16 WAV；播放使用 Realtek 扬声器，声音会被听到。默认通过数字回环输入测试软件与虚拟麦克风链路，使用 `-PhysicalMicrophone` 则通过 Intel 阵列麦克风收音；若声学回路太弱，测试会拒绝静音结果。指定 `-AiRootPath '<已准备好的 ai 目录>'` 会追加 AI 实时编辑、VB-CABLE 输出和端到端延迟校准，无需人工说话；AI 延迟预算独立设为 p95 ≤1000 ms。脚本结束时恢复测试环境变量。
+The final v0.4 stability acceptance on 2026-10-13 used speaker playback of the test speech, Intel array microphone capture and VB-CABLE output, a 5 ms buffer and monitoring off. Original p95 176.43 ms, frequency-zero/gain 181.05 ms; Female 221.88 ms, Blown mic 176.70 ms, Broadcast 171.66 ms, Ethereal 218.32 ms. Every scenario had at least 26 valid matched windows and zero application underruns/overflows; the female preset also passed 60 continuous seconds and 10 seconds of silence. Driver startup interrupt notifications remain and do not grow during preset runs. Original and frequency-zero/gain exceed 150 ms, and Female and Ethereal exceed 200 ms; the user explicitly chose stability over the latency target and accepted honest delivery, so this release does not claim the original target. The output driver starts silently and does not consume audio before prefill completes; clock control does not update without a complete input block.
+
+Run `./tests/Run-AudioAcceptance.ps1` from the source directory to generate and loop a speech WAV automatically; logs go to `research/audio-acceptance/artifacts`. `-StimulusWavPath` can point to a 48 kHz, mono, PCM16 WAV; playback uses the Realtek speakers and is audible. By default the test uses digital loopback to exercise the software and virtual-microphone path; `-PhysicalMicrophone` captures through the Intel array microphone, and an acoustic loop that is too weak is rejected as silent. `-AiRootPath '<prepared ai directory>'` adds AI live-edit, VB-CABLE output and end-to-end latency calibration without human speech; the AI latency budget is separately p95 ≤1000 ms. The script restores the test environment variables when it ends.

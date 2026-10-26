@@ -1,5 +1,7 @@
 # Triage Labels
 
+English | [中文](triage-labels_zh.md)
+
 | Canonical role | Tracker label | Meaning |
 | --- | --- | --- |
 | `needs-triage` | `needs-triage` | Maintainer evaluation needed |

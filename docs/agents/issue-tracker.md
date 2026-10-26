@@ -1,5 +1,7 @@
 # Issue tracker: GitHub
 
+English | [中文](issue-tracker_zh.md)
+
 Issues and specs live in GitHub Issues for `t66sun/isMyMicThatBad`.
 Use the `gh` CLI from this repository; it resolves the repo from `origin`.
 

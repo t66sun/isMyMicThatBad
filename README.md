@@ -1,5 +1,7 @@
 # isMyMicThatBad
 
+English | [中文](docs/README_zh.md)
+
 A Windows voice changer with a frosted-glass filter-card editor, configurable audio chains, presets and optional close-to-tray behavior.
 
 Download the portable Windows x64 ZIP from [GitHub Releases](https://github.com/t66sun/isMyMicThatBad/releases). Usage and known audio limitations are in [the user guide](docs/user-guide.md).
