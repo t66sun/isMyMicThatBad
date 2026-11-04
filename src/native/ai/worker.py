@@ -1,5 +1,6 @@
 """Local RVC streams over inherited pipes; no audio files or network services."""
 import argparse
+from functools import partial
 import importlib.util
 import json
 import os
@@ -10,8 +11,19 @@ import traceback
 
 HOP = 12480
 os.environ.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
-                  TORCH_FORCE_WEIGHTS_ONLY_LOAD="1", RVC_CUDA_GRAPH="0",
+                  TORCH_FORCE_WEIGHTS_ONLY_LOAD="1",
                   OMP_NUM_THREADS="4", OPENBLAS_NUM_THREADS="1")
+
+
+def prewarmed_synthesis(run_graph, model, shape, forward, *inputs):
+    # The first synthesis call is made by open() during prewarm. A formant edit
+    # can change the output length; capturing that new graph stalls a live hop.
+    prepared = getattr(model, "_mic_synthesis_shape", None)
+    if prepared is None:
+        model._mic_synthesis_shape = shape
+    elif shape != prepared:
+        return forward(*inputs)
+    return run_graph(model, shape, forward, *inputs)
 
 
 def read_exact(stream, count):
@@ -45,6 +57,7 @@ class Streams:
         self.streams = {}
         self.last_rvc = None
         from infer import rtrvc
+        rtrvc.run_cuda_graph = partial(prewarmed_synthesis, rtrvc.run_cuda_graph)
         import faiss
         faiss.omp_set_num_threads(4)
         original = rtrvc.RVC
