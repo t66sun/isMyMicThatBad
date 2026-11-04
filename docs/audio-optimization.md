@@ -30,3 +30,15 @@ With the qualified microphone/cable configuration above, three consecutive optim
 Full stability and manual voice-naturalness assessment remain deferred. Hardware results exclude chat-app buffering, other devices and arbitrary 64-card chains. Preserve local raw measurements and completed release packages as evidence.
 
 The v0.4.0 release starts render with silence before capture and retains the three-period FIFO and additional startup reserve. Readers wait for priming, and input-clock correction samples only complete input blocks. Final physical calibration, 60-second female-preset playback and 10-second silence checks passed with zero application underruns/overflows. Full 30-minute and subjective checks remain deferred.
+
+## Fixed-chain RVC incident capture
+
+Use an optimized build and the saved six-card session. In the project toolchain shell, build the observer with `cargo test --release --features custom-protocol --manifest-path src/app/src-tauri/Cargo.toml --test hardware_latency --no-run`. Pass its printed test executable to the runner. Create a new dated evidence directory for each campaign.
+
+```powershell
+./tests/Run-ChainEvidence.ps1 -TestExe $testExe -SessionPath $session -AiRoot $preparedAi -EvidenceDirectory $evidence -StimulusWav $speech -SpeakerId $physicalSpeaker -CableReaderId $cableOutput -Scenario six-on -Repeats 5 -Seconds 90
+```
+
+Use `six-off`, `rvc` and `dsp` for the matched controls and `digital` for speaker loopback. The stimulus is audible. The runner stages a private runtime in the generated build target directory. Each trial owns its settings, first-fault status, GPU log when available, per-block timing, pre-clamp peaks and endpoint energy measurements. Microphone audio stays in memory. Compare timing from the same route, levels, buffer and monitoring state. `tests/summarize_chain_evidence.py` condenses the raw runs. In the app, failure status retains the last queue counters until a new start or explicit stop. The preceding worker session log is available in `ai/worker.previous.log`.
+
+For offline quality comparisons, use `tests/chain_quality.py prepare` with a local 48 kHz mono PCM16 speech WAV. Run `tests/ai_inference.py` with the new stimulus, its printed duration, `--output-directory` and `--float-output`. Copy the six-card session and the four exported presets to the quality directory as `session.json` and `presets.json`. Point `MIC_TEST_QUALITY_DIR` there, run the ignored release audio-pipeline test `quality_probe::render_matching_inputs_at_each_card`, then run `tests/chain_quality.py summarize`. The summary identifies the peak-changing stage and measured loudness of the shuffled listening clips. Keep listener ratings separate from the objective measurements.

@@ -27,57 +27,10 @@ pub struct DeviceInfo {
     pub input: bool,
     pub is_default: bool,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Status {
-    pub running: bool,
-    pub bypassed: bool,
-    pub monitoring: bool,
-    pub input_peak: f32,
-    pub output_peak: f32,
-    pub underruns: u64,
-    pub overflows: u64,
-    pub device_xruns: u64,
-    pub error: Option<String>,
-    pub sample_rate: u32,
-}
-#[derive(Default)]
-struct Stats {
-    stop: AtomicBool,
-    ready: AtomicBool,
-    monitoring: AtomicBool,
-    bypassed: AtomicBool,
-    monitor_epoch: AtomicU64,
-    input_peak: AtomicU32,
-    output_peak: AtomicU32,
-    underruns: AtomicU64,
-    overflows: AtomicU64,
-    device_xruns: AtomicU64,
-    error: Mutex<Option<String>>,
-    worker: OnceLock<thread::Thread>,
-}
-impl Stats {
-    fn fail(&self, error: String, monitor: bool) {
-        if let Ok(mut slot) = self.error.lock() {
-            *slot = Some(if monitor {
-                format!("监听设备错误：{error}。主输出继续，请停止后重新选择耳机。")
-            } else {
-                format!("音频设备错误：{error}。处理已停止，请检查设备后重新开始。")
-            });
-        }
-        if monitor {
-            self.monitoring.store(false, Ordering::Relaxed);
-        } else {
-            self.stop.store(true, Ordering::Relaxed);
-        }
-        self.wake();
-    }
-    fn wake(&self) {
-        if let Some(worker) = self.worker.get() {
-            worker.unpark();
-        }
-    }
-}
+mod status;
+use crate::trace::{Event, Trace};
+use status::Stats;
+pub use status::Status;
 fn endpoint_id(device: &Device) -> Result<String, String> {
     device
         .id()
@@ -210,6 +163,7 @@ where
         .map_err(|e| e.to_string())
 }
 struct Reader {
+    trace: Option<crate::trace::Writer>,
     source: Consumer<f32>,
     converter: Converter,
     drift: Drift,
@@ -240,6 +194,7 @@ impl Reader {
         );
         let input = vec![0.0; converter.max_input_frames()];
         Ok(Self {
+            trace: None,
             source,
             converter,
             drift: Drift::new(),
@@ -253,6 +208,10 @@ impl Reader {
             warming: monitor,
             starving: false,
         })
+    }
+    fn observed(mut self, trace: Option<&Trace>) -> Self {
+        self.trace = trace.map(Trace::writer);
+        self
     }
     fn next(&mut self) -> f32 {
         if self.stats.stop.load(Ordering::Relaxed) || !self.stats.ready.load(Ordering::Relaxed) {
@@ -291,6 +250,13 @@ impl Reader {
             let needed = self.converter.input_frames();
             if self.source.slots() < needed {
                 if !self.starving {
+                    if let Some(writer) = &mut self.trace {
+                        writer.push(Event::Underrun {
+                            monitor: self.monitor,
+                            available: self.source.slots(),
+                            needed,
+                        });
+                    }
                     self.stats.underruns.fetch_add(1, Ordering::Relaxed);
                     self.starving = true;
                 }
@@ -307,6 +273,18 @@ impl Reader {
             {
                 self.stats.fail(error, self.monitor);
                 return 0.0;
+            }
+            if let Some(writer) = &mut self.trace {
+                let peak = self
+                    .output
+                    .iter()
+                    .fold(0.0_f32, |peak, x| peak.max(x.abs()));
+                let clipped = self.output.iter().filter(|x| x.abs() > 1.).count();
+                writer.push(Event::Render {
+                    monitor: self.monitor,
+                    peak,
+                    clipped,
+                });
             }
             self.position = 0;
             self.starving = false;
@@ -407,7 +385,12 @@ struct Runtime {
     configs: Vec<FilterConfig>,
 }
 impl Runtime {
-    fn new(settings: &Session, ai_root: Option<&Path>) -> Result<Self, String> {
+    fn new(
+        settings: &Session,
+        ai_root: Option<&Path>,
+        trace: Option<&Trace>,
+        stats: Arc<Stats>,
+    ) -> Result<Self, String> {
         settings.validate()?;
         let input = find(&settings.input_id, true)?;
         let main = find(&settings.output_id, false)?;
@@ -424,7 +407,6 @@ impl Runtime {
         let target = (settings.buffer_ms as usize * 48).max(BLOCK);
         let goal = target + BLOCK;
         let input_target = (settings.buffer_ms as usize * input_rate as usize / 1000).max(BLOCK);
-        let stats = Arc::new(Stats::default());
         stats
             .monitoring
             .store(settings.monitoring, Ordering::Relaxed);
@@ -442,7 +424,8 @@ impl Runtime {
             target,
             Arc::clone(&stats),
             false,
-        )?;
+        )?
+        .observed(trace);
         let output_rate = main_config.sample_rate();
         let output = build_output(&main, main_config, reader, Arc::clone(&stats), false)?;
         let period = output.buffer_size().map_err(|e| e.to_string())? as usize;
@@ -465,7 +448,8 @@ impl Runtime {
                             goal,
                             Arc::clone(&stats),
                             true,
-                        )?,
+                        )?
+                        .observed(trace),
                         Arc::clone(&stats),
                         true,
                     )
@@ -481,11 +465,25 @@ impl Runtime {
                 }
                 None
             };
-        let mut runner = Runner::new(Graph::new(Chain::with_ai(&settings.chain, ai_root)?));
+        let mut runner = Runner::new(Graph::new(Chain::observed(
+            &settings.chain,
+            ai_root,
+            trace,
+        )?));
         let pending = Arc::new(Mutex::new(None::<Update>));
         let changes = Arc::clone(&pending);
         let (retired_sender, retired) = sync_channel(32);
         let worker_stats = Arc::clone(&stats);
+        let mut timing = trace.map(Trace::writer);
+        if let Some(writer) = &mut timing {
+            writer.push(Event::Config {
+                input_hz: input_rate,
+                output_hz: output_rate,
+                period,
+                target: goal,
+                startup,
+            });
+        }
         let worker = thread::Builder::new()
             .name("mic-dsp".into())
             .spawn(move || {
@@ -561,11 +559,24 @@ impl Runtime {
                         break;
                     }
                     runner.set_bypassed(worker_stats.bypassed.load(Ordering::Relaxed));
+                    let block_start = timing.as_ref().map(|_| Instant::now());
                     if let Some(graph) = runner.process(&input, &mut processed) {
                         deferred = retire(graph, &retired_sender);
                     }
-                    if let Some(error) = runner.error() {
-                        worker_stats.fail(error, false);
+                    if let (Some(t), Some(writer)) = (block_start, &mut timing) {
+                        writer.push(Event::Dsp {
+                            elapsed_us: t.elapsed().as_micros() as u64,
+                            capture_frames: filled,
+                            render_frames: capacity - main_producer.slots(),
+                        });
+                    }
+                    if let Some(fault) = runner.failure() {
+                        if let Some(writer) = &mut timing {
+                            writer.push(Event::Fault {
+                                reason: fault.kind(),
+                            });
+                        }
+                        worker_stats.filter_failed(fault);
                         break;
                     }
                     let peak = processed.iter().fold(0.0_f32, |a, x| a.max(x.abs()));
@@ -600,6 +611,7 @@ impl Runtime {
             configs: settings.chain.clone(),
         };
         // Start the render driver with silence before capture/output priming, not after it.
+        let _ = runtime.stats.started.set(Instant::now());
         runtime.output.play().map_err(|e| e.to_string())?;
         runtime.capture.play().map_err(|e| e.to_string())?;
         let deadline = Instant::now() + Duration::from_millis(750);
@@ -612,10 +624,8 @@ impl Runtime {
         if !runtime.stats.ready.load(Ordering::Relaxed) {
             return Err(runtime
                 .stats
+                .snapshot(false)
                 .error
-                .lock()
-                .ok()
-                .and_then(|error| error.clone())
                 .unwrap_or_else(|| "未收到麦克风音频，请检查设备和 Windows 麦克风权限".into()));
         }
         if settings.monitoring {
@@ -661,7 +671,8 @@ impl Drop for Runtime {
 #[derive(Default)]
 pub struct Controller {
     runtime: Option<Runtime>,
-    last_error: Option<String>,
+    last_status: Option<Status>,
+    trace: Option<Trace>,
     ai_root: Option<PathBuf>,
 }
 impl Controller {
@@ -671,25 +682,36 @@ impl Controller {
             ..Self::default()
         }
     }
+    pub fn observe(&mut self, trace: Trace) {
+        self.trace = Some(trace);
+    }
     pub fn start(&mut self, settings: &Session) -> Result<(), String> {
         if self.runtime.is_some() {
             return Err("处理已经运行".into());
         }
-        self.last_error = None;
-        match Runtime::new(settings, self.ai_root.as_deref()) {
+        self.last_status = None;
+        let stats = Arc::new(Stats::default());
+        match Runtime::new(
+            settings,
+            self.ai_root.as_deref(),
+            self.trace.as_ref(),
+            Arc::clone(&stats),
+        ) {
             Ok(runtime) => {
                 self.runtime = Some(runtime);
                 Ok(())
             }
             Err(error) => {
-                self.last_error = Some(error.clone());
+                let mut status = stats.snapshot(false);
+                status.error.get_or_insert_with(|| error.clone());
+                self.last_status = Some(status);
                 Err(error)
             }
         }
     }
     pub fn stop(&mut self) {
         self.runtime.take();
-        self.last_error = None;
+        self.last_status = None;
     }
     pub fn set_chain(&mut self, filters: &[FilterConfig]) -> Result<(), String> {
         dsp::validate(filters)?;
@@ -711,12 +733,13 @@ impl Controller {
                     *pending = Some(Update::Params(filters.to_vec()));
                 }
             } else {
-                let chain = Chain::with_ai(filters, self.ai_root.as_deref()).map_err(|error| {
-                    if old_model.is_some() || new_model.is_some() {
-                        runtime.stats.fail(error.clone(), false);
-                    }
-                    error
-                })?;
+                let chain = Chain::observed(filters, self.ai_root.as_deref(), self.trace.as_ref())
+                    .map_err(|error| {
+                        if old_model.is_some() || new_model.is_some() {
+                            runtime.stats.fail(error.clone(), false);
+                        }
+                        error
+                    })?;
                 *runtime.pending.lock().map_err(|_| "音频控制状态不可用")? =
                     Some(Update::Graph(Graph::new(chain)));
             }
@@ -738,52 +761,39 @@ impl Controller {
         Ok(())
     }
     pub fn status(&mut self) -> Status {
-        if self
-            .runtime
-            .as_ref()
-            .is_some_and(|r| r.stats.stop.load(Ordering::Relaxed))
-        {
-            self.last_error = self
-                .runtime
-                .as_ref()
-                .and_then(|r| r.stats.error.lock().ok().and_then(|v| v.clone()))
-                .or_else(|| Some("音频处理已停止，请检查设备后重新开始".into()));
+        if let Some(runtime) = &self.runtime {
+            if !runtime.stats.stop.load(Ordering::Acquire) {
+                for _ in runtime.retired.try_iter() {}
+                return runtime.stats.snapshot(true);
+            }
+            self.last_status = Some(runtime.stats.snapshot(false));
             self.runtime.take();
         }
-        if let Some(runtime) = &self.runtime {
-            for _ in runtime.retired.try_iter() {}
-            Status {
-                running: true,
-                bypassed: runtime.stats.bypassed.load(Ordering::Relaxed),
-                monitoring: runtime.stats.monitoring.load(Ordering::Relaxed),
-                input_peak: f32::from_bits(runtime.stats.input_peak.load(Ordering::Relaxed)),
-                output_peak: f32::from_bits(runtime.stats.output_peak.load(Ordering::Relaxed)),
-                underruns: runtime.stats.underruns.load(Ordering::Relaxed),
-                overflows: runtime.stats.overflows.load(Ordering::Relaxed),
-                device_xruns: runtime.stats.device_xruns.load(Ordering::Relaxed),
-                error: runtime.stats.error.lock().ok().and_then(|s| s.clone()),
-                sample_rate: RATE as u32,
-            }
-        } else {
-            Status {
-                running: false,
-                bypassed: false,
-                monitoring: false,
-                input_peak: 0.0,
-                output_peak: 0.0,
-                underruns: 0,
-                overflows: 0,
-                device_xruns: 0,
-                error: self.last_error.clone(),
-                sample_rate: RATE as u32,
-            }
-        }
+        self.last_status
+            .clone()
+            .unwrap_or_else(|| Stats::default().snapshot(false))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn render_trace_counts_clipping_after_resampling() {
+        let stats = Arc::new(Stats::default());
+        stats.ready.store(true, Ordering::Relaxed);
+        let trace = Trace::default();
+        let (mut sink, source) = RingBuffer::new(4096);
+        for _ in 0..4096 {
+            sink.push(1.5).unwrap();
+        }
+        let mut reader = Reader::new(source, 48000, BLOCK, stats, false)
+            .unwrap()
+            .observed(Some(&trace));
+        let last = (0..4 * BLOCK).map(|_| reader.next()).last().unwrap();
+        assert_eq!(last, 1.);
+        assert!(trace.drain().iter().any(|s| matches!(s.event, Event::Render {monitor: false, clipped, peak} if clipped == BLOCK && peak > 1.)));
+    }
     #[test]
     fn monitoring_failure_preserves_main_output() {
         let stats = Arc::new(Stats::default());
@@ -810,7 +820,7 @@ mod tests {
         assert_eq!(stats.device_xruns.load(Ordering::Relaxed), 1);
         callback(cpal::ErrorKind::DeviceNotAvailable.into());
         assert!(stats.stop.load(Ordering::Relaxed));
-        assert!(stats.error.lock().unwrap().is_some());
+        assert!(stats.snapshot(false).error.is_some());
     }
     #[test]
     fn starvation_is_one_event_and_reader_recovers_after_refill() {

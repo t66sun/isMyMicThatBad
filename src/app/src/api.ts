@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emptySession, validateSession, type Session, type FilterInstance } from './model';
 export interface Device { id: string; name: string; input: boolean; isDefault: boolean }
-export interface Status { running: boolean; bypassed: boolean; monitoring: boolean; inputPeak: number; outputPeak: number; underruns: number; overflows: number; deviceXruns: number; error: string | null; sampleRate: number }
+export interface Status { running: boolean; bypassed: boolean; monitoring: boolean; inputPeak: number; outputPeak: number; underruns: number; overflows: number; deviceXruns: number; error: string | null; sampleRate: number; failureKind?: string | null; failureAfterStartMs?: number | null }
 export interface AiStatus { ready: boolean; preparing: boolean; error: string | null; modelPath: string; indexPath: string }
 export const aiUnavailable: AiStatus = {ready:false,preparing:false,error:null,modelPath:'',indexPath:''};
 export const native = '__TAURI_INTERNALS__' in window;

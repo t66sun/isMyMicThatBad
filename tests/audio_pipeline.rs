@@ -963,3 +963,6 @@ fn shared_presets_have_realtime_processing_headroom() {
         );
     }
 }
+
+#[path = "quality_probe.rs"]
+mod quality_probe;

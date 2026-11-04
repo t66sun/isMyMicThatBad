@@ -85,6 +85,9 @@ pub trait Filter: Send {
         0
     }
     fn error(&self) -> Option<String> {
+        self.failure().map(|e| e.message().to_owned())
+    }
+    fn failure(&self) -> Option<crate::ai::Failure> {
         None
     }
 }
@@ -187,6 +190,13 @@ impl Chain {
         configs: &[FilterConfig],
         root: Option<&std::path::Path>,
     ) -> Result<Self, String> {
+        Self::observed(configs, root, None)
+    }
+    pub(crate) fn observed(
+        configs: &[FilterConfig],
+        root: Option<&std::path::Path>,
+        trace: Option<&crate::trace::Trace>,
+    ) -> Result<Self, String> {
         validate(configs)?;
         let mut nodes = Vec::with_capacity(configs.len());
         let mut latency = 0;
@@ -257,6 +267,7 @@ impl Chain {
                 "rvc" => Box::new(crate::ai::Rvc::new(
                     root.ok_or("请先准备 AI 运行环境")?,
                     config,
+                    trace,
                 )?),
                 _ => return Err("未知滤镜".into()),
             };
@@ -305,6 +316,9 @@ impl Chain {
     }
     pub fn error(&self) -> Option<String> {
         self.nodes.iter().find_map(|node| node.processor.error())
+    }
+    pub(crate) fn failure(&self) -> Option<crate::ai::Failure> {
+        self.nodes.iter().find_map(|node| node.processor.failure())
     }
     pub fn update_configs(&mut self, configs: &[FilterConfig]) {
         for (index, node) in self.nodes.iter_mut().enumerate() {

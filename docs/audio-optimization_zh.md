@@ -30,3 +30,15 @@
 完整稳定性和人工音色自然度评估仍然延期。硬件结果不包含聊天应用缓冲、其他设备和任意 64 卡链路。保留本地原始测量和已完成的发布包作为证据。
 
 v0.4.0 发布在采集前以静音开始渲染，保留三周期 FIFO 和额外启动预留。读取器等待预填，输入时钟校正只采样完整输入块。最终物理校准、60 秒女声预设播放和 10 秒静音检查通过，应用欠载／溢出为零。完整 30 分钟和主观检查仍然延期。
+
+## 固定链 RVC 故障取证
+
+使用优化构建和保存的六卡配置。在项目工具链终端中执行 `cargo test --release --features custom-protocol --manifest-path src/app/src-tauri/Cargo.toml --test hardware_latency --no-run` 构建观察器，将命令输出的测试程序路径传给脚本。每批试验先建立新的带日期证据目录。
+
+```powershell
+./tests/Run-ChainEvidence.ps1 -TestExe $testExe -SessionPath $session -AiRoot $preparedAi -EvidenceDirectory $evidence -StimulusWav $speech -SpeakerId $physicalSpeaker -CableReaderId $cableOutput -Scenario six-on -Repeats 5 -Seconds 90
+```
+
+分别以 `six-off`、`rvc` 和 `dsp` 运行匹配对照，以 `digital` 运行扬声器回环。测试语音会从扬声器播放。脚本在生成的构建目标目录中准备独立运行时，每轮单独保存配置、首错状态、可用的 GPU 日志、逐块计时、限幅前峰值和各端点能量。麦克风音频只在内存中处理。比较延迟时保持设备路径、电平、缓冲和监听状态一致。`tests/summarize_chain_evidence.py` 可以汇总原始结果。应用在故障停止后保留队列计数，直到再次启动或主动停止。上一轮 worker 日志位于 `ai/worker.previous.log`。
+
+离线音质对照使用 `tests/chain_quality.py prepare` 和本地 48 kHz 单声道 PCM16 语音生成素材。将新素材及命令输出的时长传入 `tests/ai_inference.py`，指定 `--output-directory` 和 `--float-output`。把六卡配置和导出的四个预设作为 `session.json`、`presets.json` 复制到音质目录。将 `MIC_TEST_QUALITY_DIR` 指向该目录，运行优化版 audio_pipeline 中显式忽略的 `quality_probe::render_matching_inputs_at_each_card`，再执行 `tests/chain_quality.py summarize`。汇总记录造成波形变化的级别及随机试听片段的实测响度，人工听评与客观指标分开记录。

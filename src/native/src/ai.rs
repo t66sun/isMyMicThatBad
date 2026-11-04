@@ -1,4 +1,5 @@
 use crate::dsp::{AiModel, Filter, FilterConfig};
+use crate::trace::{Event, Trace, Writer};
 use rtrb::{Consumer, Producer, RingBuffer};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
-        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering},
         Arc, Mutex, OnceLock, Weak,
     },
     thread::{self, JoinHandle},
@@ -135,7 +136,11 @@ extern "system" {
         remaining: *mut u32,
     ) -> i32;
 }
-fn read_pipe(pipe: &mut ChildStdout, data: &mut [u8], deadline: Instant) -> Result<(), String> {
+fn read_pipe(
+    pipe: &mut ChildStdout,
+    data: &mut [u8],
+    deadline: Instant,
+) -> Result<(), WorkerError> {
     let mut offset = 0;
     while offset < data.len() {
         let mut available = 0;
@@ -151,10 +156,10 @@ fn read_pipe(pipe: &mut ChildStdout, data: &mut [u8], deadline: Instant) -> Resu
             )
         };
         if result == 0 {
-            return Err("AI 推理进程已断开，请查看 worker.log".into());
+            return Err(WorkerError::disconnected());
         }
         if Instant::now() >= deadline {
-            return Err("AI 推理响应超时，处理已停止".into());
+            return Err(WorkerError::timeout());
         }
         if available == 0 {
             thread::sleep(Duration::from_millis(1));
@@ -163,9 +168,9 @@ fn read_pipe(pipe: &mut ChildStdout, data: &mut [u8], deadline: Instant) -> Resu
         let count = (available as usize).min(data.len() - offset);
         let read = pipe
             .read(&mut data[offset..offset + count])
-            .map_err(|e| e.to_string())?;
+            .map_err(WorkerError::io)?;
         if read == 0 {
-            return Err("AI 推理进程已退出".into());
+            return Err(WorkerError::disconnected());
         }
         offset += read;
     }
@@ -176,7 +181,7 @@ struct Wire {
     output: ChildStdout,
 }
 impl Wire {
-    fn reply(&mut self, timeout: Duration) -> Result<Value, String> {
+    fn reply(&mut self, timeout: Duration) -> Result<Value, WorkerError> {
         let deadline = Instant::now() + timeout;
         let mut header = Vec::new();
         loop {
@@ -195,7 +200,8 @@ impl Wire {
             return Err(format!(
                 "AI 推理失败：{}",
                 response["error"].as_str().unwrap_or("未知错误")
-            ));
+            )
+            .into());
         }
         Ok(response)
     }
@@ -204,13 +210,13 @@ impl Wire {
         header: Value,
         samples: &[u8],
         timeout: Duration,
-    ) -> Result<Value, String> {
-        serde_json::to_writer(&mut self.input, &header).map_err(|e| e.to_string())?;
+    ) -> Result<Value, WorkerError> {
+        serde_json::to_writer(&mut self.input, &header).map_err(|e| WorkerError::io(e.into()))?;
         self.input
             .write_all(b"\n")
             .and_then(|_| self.input.write_all(samples))
             .and_then(|_| self.input.flush())
-            .map_err(|e| e.to_string())?;
+            .map_err(WorkerError::io)?;
         self.reply(timeout)
     }
 }
@@ -257,9 +263,10 @@ impl Service {
         bytes: &mut [u8],
         audio: bool,
         timeout: Duration,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, WorkerError> {
         let mut wire = self.wire.lock().map_err(|_| "AI 通信不可用")?;
-        *self.deadline.lock().map_err(|_| "AI 超时控制不可用")? = Some(Instant::now() + timeout);
+        let expires = Instant::now() + timeout;
+        *self.deadline.lock().map_err(|_| "AI 超时控制不可用")? = Some(expires);
         let result = wire
             .request(header, if audio { bytes } else { &[] }, timeout)
             .and_then(|response| {
@@ -267,10 +274,16 @@ impl Service {
                     if response["frames"] != HOP {
                         return Err("AI 输出采样块无效".into());
                     }
-                    read_pipe(&mut wire.output, bytes, Instant::now() + timeout)?;
+                    read_pipe(&mut wire.output, bytes, expires)?;
                 }
                 Ok(response)
             });
+        // A watchdog kill can surface as a broken pipe, including while writing stdin.
+        let result = if result.is_err() && Instant::now() >= expires {
+            Err(WorkerError::timeout())
+        } else {
+            result
+        };
         if let Ok(mut deadline) = self.deadline.lock() {
             *deadline = None;
         }
@@ -297,6 +310,15 @@ impl Drop for Service {
 type Cache = Option<(PathBuf, Option<AiModel>, Weak<Service>)>;
 static SERVICE: OnceLock<Mutex<Cache>> = OnceLock::new();
 static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+fn new_worker_log(root: &Path) -> std::io::Result<File> {
+    let current = root.join("worker.log");
+    match fs::rename(&current, root.join("worker.previous.log")) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    File::create_new(current)
+}
 fn service(root: &Path, model: &Option<AiModel>) -> Result<Arc<Service>, String> {
     let mut cache = SERVICE
         .get_or_init(|| Mutex::new(None))
@@ -317,7 +339,7 @@ fn service(root: &Path, model: &Option<AiModel>) -> Result<Arc<Service>, String>
     }
     fs::write(root.join("worker.py"), include_str!("../ai/worker.py"))
         .map_err(|e| e.to_string())?;
-    let log = File::create(root.join("worker.log")).map_err(|e| e.to_string())?;
+    let log = new_worker_log(root).map_err(|e| e.to_string())?;
     let mut child = Command::new(root.join("python/python.exe"))
         .arg("-I")
         .arg("-u")
@@ -337,38 +359,38 @@ fn service(root: &Path, model: &Option<AiModel>) -> Result<Arc<Service>, String>
     if let Err(error) = wire.reply(Duration::from_secs(60)) {
         let _ = child.kill();
         let _ = child.wait();
-        return Err(error);
+        return Err(error.into());
     }
     let shared = Arc::new(Service::new(child, wire));
     *cache = Some((root.to_path_buf(), model.clone(), Arc::downgrade(&shared)));
     Ok(shared)
 }
-#[derive(Default)]
-struct State {
-    stopped: AtomicBool,
-    failed: AtomicBool,
-    error: Mutex<Option<String>>,
-}
-impl State {
-    fn fail(&self, error: String) {
-        if !self.failed.load(Ordering::Acquire) {
-            if let Ok(mut slot) = self.error.lock() {
-                *slot = Some(error);
-            }
-            self.failed.store(true, Ordering::Release);
-        }
-    }
-}
+mod failure;
+use failure::State;
+pub use failure::{Failure, WorkerError};
 pub(crate) struct Rvc {
     input: Producer<f32>,
     output: Consumer<f32>,
     state: Arc<State>,
     parameters: Arc<[AtomicU32; 4]>,
     worker: Option<JoinHandle<()>>,
+    trace: Option<Writer>,
 }
 impl Rvc {
-    pub(crate) fn new(root: &Path, config: &FilterConfig) -> Result<Self, String> {
+    pub(crate) fn new(
+        root: &Path,
+        config: &FilterConfig,
+        trace: Option<&Trace>,
+    ) -> Result<Self, String> {
         let shared = service(root, &config.model)?;
+        Self::open(shared, root, config, trace)
+    }
+    fn open(
+        shared: Arc<Service>,
+        root: &Path,
+        config: &FilterConfig,
+        trace: Option<&Trace>,
+    ) -> Result<Self, String> {
         let id = SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let model = config.model.as_ref();
         let path = model.map(|m| m.path.clone()).unwrap_or_default();
@@ -395,16 +417,25 @@ impl Rvc {
             AtomicU32::new(config.params[KEYS[i]].to_bits())
         }));
         let params = Arc::clone(&parameters);
+        let mut bridge_trace = trace.map(Trace::writer);
         let worker = thread::Builder::new()
             .name("mic-rvc-bridge".into())
             .spawn(move || {
                 let mut bytes = vec![0; HOP * 4];
+                let mut hop = 0;
                 while !status.stopped.load(Ordering::Acquire)
-                    && !status.failed.load(Ordering::Acquire)
+                    && status.cause.load(Ordering::Acquire) == 0
                 {
                     if source.slots() < HOP {
                         thread::park_timeout(Duration::from_millis(10));
                         continue;
+                    }
+                    hop += 1;
+                    if let Some(writer) = &mut bridge_trace {
+                        writer.push(Event::AiRequest {
+                            hop,
+                            input_frames: source.slots(),
+                        });
                     }
                     for sample in bytes.chunks_exact_mut(4) {
                         sample.copy_from_slice(&source.pop().unwrap().to_le_bytes());
@@ -414,13 +445,15 @@ impl Rvc {
                         .enumerate()
                         .map(|(i, key)| (*key, f32::from_bits(params[i].load(Ordering::Relaxed))))
                         .collect();
-                    let result = (|| -> Result<(), String> {
-                        shared.call(
+                    let result = (|| -> Result<(), WorkerError> {
+                        let sent = bridge_trace.as_ref().map(|_| Instant::now());
+                        let reply = shared.call(
                             json!({"op":"process","id":id,"params":values}),
                             &mut bytes,
                             true,
                             Duration::from_secs(2),
                         )?;
+                        let roundtrip_us = sent.map(|t| t.elapsed().as_micros() as u64);
                         if sink.slots() < HOP {
                             return Err("AI 输出队列溢出，处理已停止".into());
                         }
@@ -430,6 +463,17 @@ impl Rvc {
                                 return Err("AI 输出包含无效采样".into());
                             }
                             sink.push(value).map_err(|_| "AI 输出队列溢出")?;
+                        }
+                        if let (Some(writer), Some(roundtrip_us)) =
+                            (&mut bridge_trace, roundtrip_us)
+                        {
+                            writer.push(Event::AiReply {
+                                hop,
+                                roundtrip_us,
+                                inference_us: (reply["milliseconds"].as_f64().unwrap_or_default()
+                                    * 1000.0) as u64,
+                                playable_frames: sink.buffer().capacity() - sink.slots(),
+                            });
                         }
                         Ok(())
                     })();
@@ -452,18 +496,25 @@ impl Rvc {
             state,
             parameters,
             worker: Some(worker),
+            trace: trace.map(Trace::writer),
         })
     }
 }
 impl Filter for Rvc {
     fn process(&mut self, input: &[f32], output: &mut [f32]) {
         output.fill(0.0);
-        if self.state.failed.load(Ordering::Acquire) {
+        if self.state.cause.load(Ordering::Acquire) != 0 {
             return;
+        }
+        if let Some(writer) = &mut self.trace {
+            writer.push(Event::AiQueue {
+                input_frames: self.input.buffer().capacity() - self.input.slots(),
+                playable_frames: self.output.slots(),
+            });
         }
         for value in input {
             if self.input.push(*value).is_err() {
-                self.state.fail("AI 输入队列溢出，处理已停止".into());
+                self.state.input_full();
                 return;
             }
         }
@@ -475,7 +526,7 @@ impl Filter for Rvc {
                 Ok(sample) => *value = sample,
                 Err(_) => {
                     output.fill(0.0);
-                    self.state.fail("AI 推理未赶上实时音频，处理已停止".into());
+                    self.state.output_empty();
                     return;
                 }
             }
@@ -489,12 +540,8 @@ impl Filter for Rvc {
     fn latency(&self) -> usize {
         LATENCY
     }
-    fn error(&self) -> Option<String> {
-        if self.state.failed.load(Ordering::Acquire) {
-            self.state.error.lock().ok().and_then(|error| error.clone())
-        } else {
-            None
-        }
+    fn failure(&self) -> Option<Failure> {
+        self.state.failure()
     }
 }
 impl Drop for Rvc {
@@ -508,8 +555,36 @@ impl Drop for Rvc {
 }
 
 #[cfg(test)]
+mod bridge_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_worker_restart_retains_the_previous_log() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("mic-worker-log-{}-{stamp}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        for message in ["first", "second", "third"] {
+            new_worker_log(&root)
+                .unwrap()
+                .write_all(message.as_bytes())
+                .unwrap();
+        }
+        assert_eq!(
+            fs::read(root.join("worker.previous.log")).unwrap(),
+            b"second"
+        );
+        assert_eq!(fs::read(root.join("worker.log")).unwrap(), b"third");
+        fs::remove_file(root.join("worker.previous.log")).unwrap();
+        fs::remove_file(root.join("worker.log")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
 
     fn rvc_without_worker() -> (Rvc, Consumer<f32>, Producer<f32>) {
         rvc_without_worker_with_tail(0)
@@ -535,6 +610,7 @@ mod tests {
                 state,
                 parameters,
                 worker: None,
+                trace: None,
             },
             captured_input,
             prepared_output,
@@ -587,6 +663,32 @@ mod tests {
     }
 
     #[test]
+    fn exited_child_is_distinct_from_a_missed_audio_deadline() {
+        let mut child = Command::new("cmd.exe")
+            .args(["/d", "/c", "exit", "7"])
+            .creation_flags(0x08000000)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let wire = Wire {
+            input: child.stdin.take().unwrap(),
+            output: child.stdout.take().unwrap(),
+        };
+        assert_eq!(child.wait().unwrap().code(), Some(7));
+        let service = Service::new(child, wire);
+        let failure = service
+            .call(
+                json!({"op":"process"}),
+                &mut [0; 4],
+                true,
+                Duration::from_secs(2),
+            )
+            .unwrap_err();
+        assert_eq!(failure.kind, "ai_worker_exit");
+    }
+
+    #[test]
     fn wire_reply_stops_waiting_at_its_deadline() {
         let mut child = Command::new("powershell.exe")
             .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"])
@@ -609,7 +711,7 @@ mod tests {
         let _ = child.wait();
 
         let error = result.expect_err("a worker that never replies must time out");
-        assert!(error.contains("超时"), "unexpected worker error: {error}");
+        assert_eq!(error.kind, "ai_worker_timeout");
         assert!(
             elapsed < Duration::from_secs(1),
             "reply blocked for {elapsed:?}"
@@ -691,7 +793,7 @@ mod tests {
             .wait()
             .expect("wait for killed worker");
 
-        assert!(result.is_err(), "hung worker unexpectedly replied");
+        assert_eq!(result.as_ref().unwrap_err().kind, "ai_worker_timeout");
         assert!(
             elapsed >= Duration::from_millis(200),
             "request failed before the watchdog deadline: {elapsed:?}; result={result:?}; worker exit={exit}"

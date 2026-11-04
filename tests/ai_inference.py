@@ -152,7 +152,11 @@ def run(args):
     samples_per_stream = block_count * HOP
     deadline = time.monotonic() + TOTAL_TIMEOUT_SECONDS
     wall_started = time.monotonic()
-    worker_log_path = root / "probe-worker.log"
+    output_dir = args.output_directory.resolve() if args.output_directory else root
+    output_dir.mkdir(parents=True, exist_ok=True)
+    worker_log_path = output_dir / "probe-worker.log"
+    if args.output_directory and any((output_dir / name).exists() for name in ("probe.wav", "rvc.f32")):
+        raise FileExistsError("choose a fresh output directory for this measurement")
     process = None
     timeout_timer = None
     inference_ms = [[] for _ in range(args.streams)]
@@ -160,8 +164,9 @@ def run(args):
     sums_output = [0.0] * args.streams
     sums_difference = [0.0] * args.streams
     probe_blocks = []
+    float_blocks = [] if args.float_output else None
 
-    with worker_log_path.open("wb") as worker_log:
+    with worker_log_path.open("xb" if args.output_directory else "wb") as worker_log:
         try:
             process = subprocess.Popen(
                 [str(runtime_python), "-I", "-u", str(worker_path), "--root", str(root)],
@@ -213,6 +218,8 @@ def run(args):
                                                                for source_sample, result_sample in zip(block, output))
                     if stream_index == 0:
                         probe_blocks.append(pcm16_bytes(output))
+                        if float_blocks is not None:
+                            float_blocks.append(output_raw)
 
             for stream_id in stream_ids:
                 closed = request(process, reader, {"op": "close", "id": stream_id}, deadline)
@@ -224,12 +231,14 @@ def run(args):
                 if marker in worker_log:
                     raise AssertionError(f"worker log contains internal error marker {marker!r}: {worker_log_path}")
 
-            probe_path = root / "probe.wav"
+            probe_path = output_dir / "probe.wav"
             with wave.open(str(probe_path), "wb") as output_wav:
                 output_wav.setnchannels(1)
                 output_wav.setsampwidth(2)
                 output_wav.setframerate(RATE)
                 output_wav.writeframes(b"".join(probe_blocks))
+            if float_blocks is not None:
+                (output_dir / "rvc.f32").write_bytes(b"".join(float_blocks))
 
             wall_elapsed = time.monotonic() - wall_started
             print(f"Worker wall time (startup, model load, and processing): {wall_elapsed:.2f} s")
@@ -269,6 +278,8 @@ def main():
     parser.add_argument("--wav", required=True, type=Path, help="48 kHz mono PCM16 input WAV")
     parser.add_argument("--seconds", type=float, default=3.0, help="requested probe duration; default 3 seconds")
     parser.add_argument("--streams", type=int, choices=(1, 2), default=1, help="concurrent model streams; default 1")
+    parser.add_argument("--output-directory", type=Path, help="run-specific directory for evidence")
+    parser.add_argument("--float-output", action="store_true", help="save float samples before PCM16 clipping for stage comparisons")
     args = parser.parse_args()
     if not math.isfinite(args.seconds) or args.seconds <= 0:
         parser.error("--seconds must be a finite positive number")

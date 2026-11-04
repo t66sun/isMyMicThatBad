@@ -6,3 +6,4 @@ mod effects;
 pub mod graph;
 pub mod settings;
 pub mod template;
+pub mod trace;

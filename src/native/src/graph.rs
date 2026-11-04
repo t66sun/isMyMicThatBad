@@ -137,6 +137,12 @@ impl Runner {
     pub fn update_configs(&mut self, configs: &[FilterConfig]) {
         self.current.chain.update_configs(configs);
     }
+    pub(crate) fn failure(&self) -> Option<crate::ai::Failure> {
+        self.current
+            .chain
+            .failure()
+            .or_else(|| self.next.as_ref().and_then(|graph| graph.chain.failure()))
+    }
     pub fn submit(&mut self, mut graph: Graph) -> Option<Graph> {
         if self.current.chain.same_structure(&graph.chain) {
             self.current.chain.update_from(&graph.chain);
