@@ -10,7 +10,14 @@ export const definitions = definitionsJson as FilterDefinition[];
 export function createFilter(definition: FilterDefinition): FilterInstance {
   return {id: crypto.randomUUID(), type: definition.type, enabled: true, params: Object.fromEntries(definition.parameters.map(p => [p.key, p.default]))};
 }
-export function cloneChain(chain: FilterInstance[]): FilterInstance[] { return chain.map(x => ({...x, id: crypto.randomUUID(), params: {...x.params}, ...(x.model ? {model: {...x.model}} : {})})); }
+export function cloneChain(chain: FilterInstance[], current: FilterInstance[] = []): FilterInstance[] {
+  return chain.map((card, index) => ({
+    ...card,
+    id: current[index]?.type === card.type ? current[index].id : crypto.randomUUID(),
+    params: {...card.params},
+    ...(card.model ? {model: {...card.model}} : {}),
+  }));
+}
 export function insertFilter(chain: FilterInstance[], definition: FilterDefinition, index: number): FilterInstance[] {
   if (definition.type === 'rvc' && chain.some(x => x.type === 'rvc')) return chain;
   const next = [...chain]; next.splice(Math.max(0, Math.min(index, next.length)), 0, createFilter(definition)); return next;
@@ -52,6 +59,19 @@ export const builtins: Preset[] = [
     node('formant',{semitones:1},'ethereal-formant'), node('eq',{high_gain_db:2},'ethereal-eq'),
     node('reverb',{room:70,damping:45,mix:25},'ethereal-reverb'), node('gain',{gain_db:-4},'ethereal-output')]}
 ];
+const clearVoice: Preset = {
+  id: 'builtin-ai-clear', name: 'AI 清晰人声',
+  chain: [
+    node('rvc', {}, 'clear-voice'), node('highpass', {cutoff: 80}, 'clear-high'),
+    node('distortion', {drive_db: 6, mix: 10}, 'clear-color'), node('gain', {gain_db: 0}, 'clear-gain'),
+    node('bitcrusher', {bits: 8, hold: 4, mix: 25}, 'clear-grain'), node('frequency', {shift_hz: 0}, 'clear-shift'),
+  ],
+};
+export function builtinsForVoice(chain: FilterInstance[]): Preset[] {
+  const voice = chain.find(card => card.type === 'rvc');
+  const preset = voice ? {...clearVoice, chain: [{...voice, enabled: true}, ...clearVoice.chain.slice(1)]} : clearVoice;
+  return [...builtins, preset];
+}
 export const emptySession: Session = {schemaVersion:1,inputId:'',outputId:'',monitorId:'',monitoring:false,closeToTray:false,bufferMs:5,chain:[],presets:[]};
 function validateChain(value: unknown): FilterInstance[] {
   if (!Array.isArray(value) || value.length > 64) throw new Error('滤镜数量应在 0–64 之间');

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play, Square, Settings, ChevronDown, X, RefreshCw, Save, CheckCircle2, AlertCircle, Cable, Trash2, Plus } from 'lucide-react';
 import * as api from './api';
-import { definitions, builtins, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, cloneChain, type Session, type FilterInstance, type FilterDefinition, type AiModel } from './model';
+import { definitions, builtinsForVoice, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, cloneChain, type Session, type FilterInstance, type FilterDefinition, type AiModel } from './model';
 import { ChainEditor, type CardAction } from './ChainEditor';
 import { FilterIcon, Menu, ParameterControl, WindowControls } from './ui';
 import appIcon from './assets/app-icon.svg';
@@ -157,17 +157,18 @@ export default function App() {
     changeChain(chain);
   }, [session.chain, selected?.id, changeChain, select]);
   const applyPreset = (chain: FilterInstance[]) => {
-    const next = cloneChain(chain);
+    const next = cloneChain(chain, session.chain);
     changeChain(next);
     select(next[0]?.id ?? null);
   };
+  const builtins = useMemo(() => builtinsForVoice(session.chain), [session.chain]);
   const presetLabel = useMemo(() => {
     const matches = [...builtins, ...session.presets].find(p => p.chain.length === session.chain.length && p.chain.every((node, index) => {
       const other = session.chain[index];
       return node.type === other.type && node.enabled === other.enabled && node.model?.path === other.model?.path && node.model?.index === other.model?.index && Object.keys(node.params).every(key => node.params[key] === other.params[key]);
     }));
     return matches?.name ?? '自定义';
-  }, [session.chain, session.presets]);
+  }, [builtins, session.chain, session.presets]);
   const toggleAudio = async () => {
     if (!status.running && hasAi && (!aiStatus.ready || aiStatus.preparing)) { setError('请先准备 AI 环境，再开始处理。'); return; }
     setBusy(true); setError('');

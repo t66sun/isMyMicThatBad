@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFilter, cloneChain, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, validateSession, definitions, builtins } from '../src/app/src/model.ts';
+import { createFilter, cloneChain, emptySession, insertFilter, moveFilter, duplicateFilter, removeFilter, validateSession, definitions, builtins, builtinsForVoice } from '../src/app/src/model.ts';
 import { editChain, undoChain, redoChain, emptyHistory } from '../src/app/src/history.ts';
 test('insertion, reorder and duplication preserve independent instance identity', () => {
   let chain = insertFilter([], definitions[0], 0);
@@ -16,7 +16,7 @@ test('insertion, reorder and duplication preserve independent instance identity'
   assert.equal(chain[1].params.cutoff, 80);
   assert.equal(removeFilter(chain, id).length, 2);
 });
-test('all fourteen filters and seven presets have complete valid independent metadata', () => {
+test('all fourteen filters and seven conventional presets have complete valid independent metadata', () => {
   assert.equal(definitions.length, 14); assert.equal(builtins.length, 7);
   assert.equal(new Set(definitions.map(d => d.type)).size, definitions.length);
   for (const definition of definitions) {
@@ -32,7 +32,7 @@ test('bitcrusher exposes the declared bit-depth, hold and mix bounds', () => {
   assert.deepEqual(definition.parameters.map(({key,min,max,step,default:value}) => ({key,min,max,step,default:value})), [
     {key:'bits',min:2,max:16,step:1,default:8},
     {key:'hold',min:1,max:48,step:1,default:4},
-    {key:'mix',min:0,max:100,step:1,default:100},
+    {key:'mix',min:0,max:100,step:1,default:25},
   ]);
   const node = createFilter(definition);
   for (const [key,value] of [['bits',2],['bits',16],['hold',1],['hold',48],['mix',0],['mix',100]] as const) {
@@ -41,6 +41,19 @@ test('bitcrusher exposes the declared bit-depth, hold and mix bounds', () => {
   for (const [key,value] of [['bits',1],['bits',17],['hold',0],['hold',49],['mix',-1],['mix',101]] as const) {
     assert.throws(() => validateSession({...emptySession,chain:[{...node,params:{...node.params,[key]:value}}]}));
   }
+});
+test('the clear voice preset keeps the voice and live six-card identities while reducing color', () => {
+  const template = builtinsForVoice([]).find(p => p.id === 'builtin-ai-clear')!;
+  const saved = cloneChain(template.chain);
+  saved[0].model = {path:'C:/voices/custom.pth', index:''};
+  saved[0].params.pitch = 3;
+  saved[4].params.mix = 100;
+  const preset = builtinsForVoice(saved).find(p => p.id === template.id)!;
+  const applied = cloneChain(preset.chain, saved);
+  assert.deepEqual(applied.map(n => n.id), saved.map(n => n.id));
+  assert.deepEqual(applied[0], saved[0]);
+  assert.deepEqual([applied[2].params.mix, applied[4].params.mix, saved[4].params.mix], [10,25,100]);
+  validateSession({...emptySession, chain:applied});
 });
 
 test('chain history restores identities, parameters, order and bypass without mutating snapshots', () => {
