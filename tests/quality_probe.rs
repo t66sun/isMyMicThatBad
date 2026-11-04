@@ -19,6 +19,27 @@ fn read_samples(path: &Path) -> Vec<f32> {
         .collect()
 }
 
+#[test]
+#[ignore = "relative DSP timing; run in release mode"]
+fn neutral_frequency_avoids_the_active_fir_cost() {
+    let input = std::array::from_fn::<_, BLOCK, _>(|i| (i as f32 * 0.11).sin() * 0.4);
+    let elapsed = |shift| {
+        let config = super::config("frequency", &[("shift_hz", shift)]);
+        let mut chain = Chain::new(&[config]).unwrap();
+        let mut out = [0.; BLOCK];
+        let start = Instant::now();
+        for _ in 0..2000 {
+            chain.process(&input, &mut out);
+            std::hint::black_box(&out);
+        }
+        start.elapsed()
+    };
+    let neutral = elapsed(0.);
+    let active = elapsed(80.);
+    println!("neutral {neutral:?}, active {active:?}");
+    assert!(neutral * 2 < active, "a settled zero shift should skip the FIR");
+}
+
 fn measure(root: &Path, label: &str, filters: &[FilterConfig], signal: &[f32]) {
     let mut chain = Chain::new(filters).unwrap();
     let mut output =

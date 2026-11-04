@@ -401,13 +401,20 @@ impl Frequency {
 }
 impl Filter for Frequency {
     fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        let dry_only = self.activity.value == 0.0 && !self.activity.active();
         for (x, y) in input.iter().zip(output) {
             let dry = self.raw.next(*x);
-            self.history[self.cursor] = self.lowpass.run(*x);
-            let real = self.history[(self.cursor + 255 - 127) % 255];
+            let cursor = self.cursor;
+            self.history[cursor] = self.lowpass.run(*x);
+            self.cursor = (cursor + 1) % 255;
+            if dry_only {
+                *y = dry;
+                continue;
+            }
+            let real = self.history[(cursor + 255 - 127) % 255];
             let mut imaginary = 0.0;
             for k in (0..255).step_by(2) {
-                imaginary += self.coefficients[k] * self.history[(self.cursor + 255 - k) % 255];
+                imaginary += self.coefficients[k] * self.history[(cursor + 255 - k) % 255];
             }
             let shifted = real * self.phase.cos() as f32 - imaginary * self.phase.sin() as f32;
             let mix = self.activity.next();
@@ -415,7 +422,6 @@ impl Filter for Frequency {
             self.phase = (self.phase
                 + std::f64::consts::TAU * self.shift.next() as f64 / RATE as f64)
                 .rem_euclid(std::f64::consts::TAU);
-            self.cursor = (self.cursor + 1) % 255;
         }
     }
     fn set_params(&mut self, p: &BTreeMap<String, f32>) {
@@ -428,9 +434,36 @@ impl Filter for Frequency {
     }
 }
 
+#[cfg(test)]
+mod frequency_tests {
+    use super::*;
+
+    #[test]
+    fn reactivating_a_neutral_shift_uses_the_live_input_history() {
+        let mut neutral = Frequency::new(0.0);
+        let mut reference = Frequency::new(0.0);
+        // Run the Hilbert path at zero rotation to establish a warm reference.
+        reference.activity = Smooth::new(1.0);
+        let input: [f32; BLOCK] = std::array::from_fn(|i| (i as f32 * 0.13).sin() * 0.3);
+        let mut dry = [0.; BLOCK];
+        let mut wet = [0.; BLOCK];
+        neutral.process(&input, &mut dry);
+        reference.process(&input, &mut wet);
+        assert_eq!(&dry[127..], &input[..BLOCK - 127]);
+        reference.activity = Smooth::new(0.0);
+        let edit = [("shift_hz".to_owned(), 80.0)].into();
+        neutral.set_params(&edit);
+        reference.set_params(&edit);
+        neutral.process(&input, &mut dry);
+        reference.process(&input, &mut wet);
+        assert_eq!(dry, wet);
+    }
+}
+
 struct Cutoff {
     filter: DirectForm1<f32>,
     cutoff: Smooth,
+    applied: f32,
     highpass: bool,
     tick: usize,
 }
@@ -439,6 +472,7 @@ impl Cutoff {
         Self {
             filter: DirectForm1::new(Self::coefficients(cutoff, highpass)),
             cutoff: Smooth::new(cutoff),
+            applied: cutoff,
             highpass,
             tick: 0,
         }
@@ -461,9 +495,10 @@ impl Filter for Cutoff {
     fn process(&mut self, input: &[f32], output: &mut [f32]) {
         for (x, y) in input.iter().zip(output) {
             let frequency = self.cutoff.next();
-            if self.tick % 16 == 0 {
+            if self.tick % 16 == 0 && frequency != self.applied {
                 self.filter
                     .update_coefficients(Self::coefficients(frequency, self.highpass));
+                self.applied = frequency;
             }
             self.tick = self.tick.wrapping_add(1);
             *y = self.filter.run(*x);
