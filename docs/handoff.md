@@ -2,6 +2,12 @@
 
 English | [中文](handoff_zh.md)
 
+## 2026-11-05 local audio build
+
+The local build includes the RVC timing fix and the **AI 清晰人声** preset selected in blind listening. The original six-card microphone route qualified for a 30-minute soak at a 520 ms reserve. The final 460 ms configuration completed a second 30-minute soak using the physical capture clock and silent headphone output. See the [measurement conditions and evidence](audio-optimization.md#2026-11-05-rvc-measurements).
+
+## 2026-10-13 release
+
 2026-10-13, current branch `master`. The user confirmed stability first and accepted latency overruns with honest delivery.
 
 - The final audio changes are only: start output silently, do not consume the queue before ready, and update the clock only with complete input blocks. The original three periods and startup reserve remain; experimental total-queue feedback and gain changes were reverted.

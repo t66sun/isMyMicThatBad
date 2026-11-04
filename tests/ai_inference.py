@@ -17,7 +17,7 @@ import wave
 from pathlib import Path
 
 
-HOP = 12_480
+HOP = 9_600
 RATE = 48_000
 TOTAL_TIMEOUT_SECONDS = 120
 EOF = object()
@@ -188,7 +188,7 @@ def run(args):
                     "op": "open", "id": stream_id,
                     "path": str(model_path), "index": str(index_path),
                 }, deadline)
-                if opened.get("frames") != HOP or opened.get("latency") != 2 * HOP:
+                if opened.get("frames") != HOP or opened.get("latency") != 22_080:
                     raise RuntimeError(f"unexpected open response: {opened}")
 
             params = {"pitch": 0, "formant": 0, "index": 50, "rms": 50}

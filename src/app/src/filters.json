@@ -351,7 +351,7 @@
   {
     "type": "rvc",
     "name": "AI变声 (RVC)",
-    "description": "本机离线转换到导入的 RVC 音色。音色优先，算法延迟约 520 ms；可在前后排列传统滤镜。每条管线最多一张 AI 卡片。",
+    "description": "本机离线转换到导入的 RVC 音色。算法延迟约 460 ms，可在前后排列传统滤镜。每条管线最多一张 AI 卡片。",
     "color": "#8e99a7",
     "summaryKeys": ["pitch", "index"],
     "parameters": [

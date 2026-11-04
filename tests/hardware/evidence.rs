@@ -170,6 +170,24 @@ fn fixed_chain() {
     run_fixed_chain(None);
 }
 
+fn cable_has_processed_audio(
+    produced: &mut bool,
+    output_peak: f32,
+    cable_rms: f32,
+    floor: f32,
+) -> bool {
+    *produced |= output_peak >= floor;
+    *produced && cable_rms >= floor
+}
+
+#[test]
+fn residual_cable_audio_cannot_start_the_wet_timer() {
+    let mut produced = false;
+    let onsets = [(0., 0.004), (0.2, 0.), (0., 0.1)]
+        .map(|(output, cable)| cable_has_processed_audio(&mut produced, output, cable, 0.003));
+    assert_eq!(onsets, [false, false, true]);
+}
+
 #[cfg(feature = "acceptance-replay")]
 #[test]
 #[ignore = "replays a WAV on the capture clock into VB-CABLE, with silent physical monitoring"]
@@ -255,6 +273,7 @@ fn run_fixed_chain(replay: Option<Arc<[f32]>>) {
     }
     let play = Instant::now();
     let mut first = None;
+    let mut produced = false;
     let mut baseline = None;
     let mut last_source = None;
     let mut last_cable = None;
@@ -318,7 +337,9 @@ fn run_fixed_chain(replay: Option<Arc<[f32]>>) {
         if heard.is_some_and(|m| m.1 >= floor) {
             last_monitor = Some(now);
         }
-        if first.is_none() && received.1 >= floor {
+        if first.is_none()
+            && cable_has_processed_audio(&mut produced, status.output_peak, received.1, floor)
+        {
             first = Some(now);
             baseline = Some(status.clone());
         }

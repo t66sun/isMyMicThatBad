@@ -18,8 +18,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const HOP: usize = 12480;
-pub const LATENCY: usize = HOP * 2;
+pub const HOP: usize = 9_600;
+// Collect 200 ms of input, then allow the measured 260 ms response budget.
+pub const LATENCY: usize = HOP + 12_480;
 const KEYS: [&str; 4] = ["pitch", "formant", "index", "rms"];
 const REVISION: &str = "81eed5e8f68b6bed1789f682fe78cdd324495afc";
 
@@ -619,15 +620,16 @@ mod tests {
 
     #[test]
     fn exhausted_latency_reserve_silences_and_permanently_fails() {
-        assert_eq!(LATENCY, 24_960);
+        assert_eq!(LATENCY, 22_080);
         const BLOCK: usize = 256;
-        let (mut rvc, captured_input, _prepared_output) =
-            rvc_without_worker_with_tail(LATENCY % BLOCK);
+        let tail = BLOCK / 2;
+        let (mut rvc, captured_input, _prepared_output) = rvc_without_worker_with_tail(tail);
 
-        for _ in 0..LATENCY / BLOCK {
-            let mut output = vec![1.0; BLOCK];
-            rvc.process(&[0.25; BLOCK], &mut output);
-            assert!(output.iter().all(|sample| *sample == 0.0));
+        for offset in (0..LATENCY - tail).step_by(BLOCK) {
+            let frames = BLOCK.min(LATENCY - tail - offset);
+            let mut output = [1.0; BLOCK];
+            rvc.process(&[0.25; BLOCK][..frames], &mut output[..frames]);
+            assert!(output[..frames].iter().all(|sample| *sample == 0.0));
         }
 
         let mut failed_output = vec![1.0; BLOCK];

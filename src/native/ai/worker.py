@@ -9,7 +9,7 @@ import sys
 import time
 import traceback
 
-HOP = 12480
+HOP = 9_600
 os.environ.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
                   TORCH_FORCE_WEIGHTS_ONLY_LOAD="1",
                   OMP_NUM_THREADS="4", OPENBLAS_NUM_THREADS="1")
@@ -103,7 +103,7 @@ class Streams:
         previous = next((s for s in self.streams.values()
                          if s.rvc is self.last_rvc and s.rvc.index_path == index), None)
         engine = self.engine_type(dict(rvc_root=str(self.root / "rvc"), model_path=str(model),
-                                      index_path=index, sample_rate=48000, block_ms=260,
+                                      index_path=index, sample_rate=48000, block_ms=HOP / 48,
                                       crossfade_ms=40, extra_ms=1500))
         if self.torch.device(engine.config.device).type != "cuda":
             raise RuntimeError("RVC requires a supported CUDA GPU")
@@ -129,7 +129,7 @@ class Streams:
         if engine.block_frame != HOP:
             raise ValueError("RVC block size mismatch")
         self.streams[request["id"]] = engine
-        return {"ok": True, "frames": HOP, "latency": 2 * HOP}
+        return {"ok": True, "frames": HOP, "latency": HOP + 12_480}
 
     def process(self, request, data):
         engine = self.streams[request["id"]]

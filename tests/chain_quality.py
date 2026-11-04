@@ -51,7 +51,7 @@ def prepare(root, speech):
         offset += len(x)
     dry = np.concatenate([x for _,x in pieces])
     # Pad the worker's last hop with silence.
-    dry = np.pad(dry, (0, (-len(dry)) % 12480))
+    dry = np.pad(dry, (0, (-len(dry)) % 9600))
     dry = np.rint(dry*32768).clip(-32768,32767)/32768
     write_wav(root/"stimulus.wav", dry)
     dry.astype("<f4").tofile(root/"dry.f32")

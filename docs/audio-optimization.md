@@ -4,6 +4,18 @@ English | [中文](audio-optimization_zh.md)
 
 Qualified targets are p95 ≤150 ms for the raw/frequency-zero-gain calibration and ≤200 ms for the four new presets. The earlier 120 ms and 80 ms goals remain deferred. Current measurements and limitations are in [the user guide](user-guide.md#devices-and-buffering). For v0.4.0, the user explicitly accepted exceeding these latency targets in favor of stable audio; the current measurements are not a latency-target pass.
 
+## 2026-11-05 RVC measurements
+
+On the RTX 2050 with the Saisho model and index, four of five monitored starts of the saved six-card chain previously stopped when the AI output queue ran dry. With prewarmed CUDA graphs, all five physical starts delivered converted speech. Four delivered at least 90 seconds from confirmed output, and one delivered 89.14 seconds. A separate 1,800.05-second run on the TANCHJIM-OLA II DSP microphone and headphones, VB-CABLE and a 5 ms app buffer had no steady counter growth. The p95 from the acoustic microphone reference to CABLE Output was 733.31 ms with the 520 ms reserve.
+
+The final configuration collects 200 ms of input and retains 260 ms for the worker reply. With the same devices, monitoring and app buffer, the clear voice preset ran for 1,800.04 seconds using the TANCHJIM capture clock, a known input waveform and silent headphone output. Input-to-CABLE p95 was 656.44 ms across 106 matched windows out of 113. Application underruns and overflows stayed at zero. One startup driver notification did not increase. The 400 ms candidate stopped on a late first reply and was rejected.
+
+Matched 91-second starts with the clear voice preset measured p95 of **721.13 ms** at 520 ms and **661.10 ms** at 460 ms. The matches were 207/219 and 204/219 windows. Five final starts each delivered at least 90 seconds of confirmed output. Another start reached 89.38 seconds after an early CABLE threshold and is recorded separately.
+
+The listener chose the clear voice at matched loudness. On the same RVC output, the RMS difference from the clean high-pass reference fell from 63.61% to 14.74%. Cold formant changes now prepare their synthesis lengths at model load, adding about six seconds in the isolated probe. Reopening the same voice during a card reorder took 6.5 ms, down from 248.6 ms. Live editing, reordering, global bypass and removing the AI card all delivered audio to CABLE Output.
+
+Raw settings, 2 ms match windows, per-block timing, counter histories and rejected runs are in `research/audio-acceptance/artifacts/20261105-000235-voice-fix/`. The original incidents are in `research/audio-acceptance/artifacts/20261104-224546-six-card/`.
+
 ## Constraints to preserve
 
 - Qualified configuration: Intel microphone, VB-CABLE 3072 samples / 48 kHz, 5 ms app buffer, monitoring off. Cable-only p95 measured 56.29 ms; this boundary differs from the full path, so subtraction cannot isolate app latency.
