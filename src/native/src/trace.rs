@@ -10,6 +10,12 @@ use std::time::Instant;
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Event {
+    #[cfg(feature = "acceptance-replay")]
+    ReplayInput {
+        capture_ns: u64,
+        offset: u64,
+        frames: usize,
+    },
     Config {
         input_hz: u32,
         output_hz: u32,

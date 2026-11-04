@@ -33,6 +33,8 @@ struct Terminal {
 }
 #[derive(Default)]
 pub(super) struct Stats {
+    #[cfg(feature = "acceptance-replay")]
+    pub(super) replay: Option<(Arc<[f32]>, Trace)>,
     pub(super) stop: AtomicBool,
     pub(super) ready: AtomicBool,
     pub(super) monitoring: AtomicBool,

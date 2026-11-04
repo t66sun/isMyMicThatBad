@@ -140,14 +140,42 @@ where
 {
     let channels = config.channels as usize;
     let errors = Arc::clone(&stats);
+    #[cfg(feature = "acceptance-replay")]
+    let mut replay = stats
+        .replay
+        .as_ref()
+        .map(|(samples, trace)| (samples.clone(), trace.writer(), 0u64));
+    #[cfg(feature = "acceptance-replay")]
+    if replay.is_some() && config.sample_rate != 48000 {
+        return Err("Clocked replay requires 48 kHz capture".into());
+    }
     device
         .build_input_stream::<T, _, _>(
             config,
-            move |data, _| {
+            move |data, _info| {
+                #[cfg(feature = "acceptance-replay")]
+                if let Some((_, writer, offset)) = &mut replay {
+                    writer.push(Event::ReplayInput {
+                        capture_ns: _info.timestamp().capture.as_nanos() as u64,
+                        offset: *offset,
+                        frames: data.len() / channels,
+                    });
+                }
                 let mut peak = 0.0_f32;
                 for frame in data.chunks_exact(channels) {
-                    let value =
-                        frame.iter().map(|v| v.to_sample::<f32>()).sum::<f32>() / channels as f32;
+                    let microphone = || {
+                        frame.iter().map(|v| v.to_sample::<f32>()).sum::<f32>() / channels as f32
+                    };
+                    #[cfg(not(feature = "acceptance-replay"))]
+                    let value = microphone();
+                    #[cfg(feature = "acceptance-replay")]
+                    let value = if let Some((samples, _, offset)) = &mut replay {
+                        let sample = samples[*offset as usize % samples.len()];
+                        *offset += 1;
+                        sample
+                    } else {
+                        microphone()
+                    };
                     let value = if value.is_finite() { value } else { 0.0 };
                     peak = peak.max(value.abs());
                     if producer.push(value).is_err() {
@@ -316,6 +344,12 @@ where
             move |data, _| {
                 for frame in data.chunks_exact_mut(channels) {
                     let value = reader.next();
+                    #[cfg(feature = "acceptance-replay")]
+                    let value = if monitor && reader.stats.replay.is_some() {
+                        0.
+                    } else {
+                        value
+                    };
                     for sample in frame {
                         *sample = T::from_sample(value);
                     }
@@ -394,6 +428,10 @@ impl Runtime {
         settings.validate()?;
         let input = find(&settings.input_id, true)?;
         let main = find(&settings.output_id, false)?;
+        #[cfg(feature = "acceptance-replay")]
+        if stats.replay.is_some() && !endpoint_name(&main)?.starts_with("CABLE Input") {
+            return Err("Clocked replay requires the virtual CABLE Input destination".into());
+        }
         if endpoint_id(&input)? == settings.output_id
             || (endpoint_name(&input)?.contains("CABLE")
                 && endpoint_name(&main)?.contains("CABLE In"))
@@ -670,6 +708,8 @@ impl Drop for Runtime {
 }
 #[derive(Default)]
 pub struct Controller {
+    #[cfg(feature = "acceptance-replay")]
+    replay: Option<Arc<[f32]>>,
     runtime: Option<Runtime>,
     last_status: Option<Status>,
     trace: Option<Trace>,
@@ -685,12 +725,28 @@ impl Controller {
     pub fn observe(&mut self, trace: Trace) {
         self.trace = Some(trace);
     }
+    #[cfg(feature = "acceptance-replay")]
+    pub fn replay_capture(&mut self, samples: Arc<[f32]>, trace: Trace) -> Result<(), String> {
+        if samples.is_empty() || self.runtime.is_some() {
+            return Err("Set a nonempty replay before start".into());
+        }
+        self.trace = Some(trace);
+        self.replay = Some(samples);
+        Ok(())
+    }
     pub fn start(&mut self, settings: &Session) -> Result<(), String> {
         if self.runtime.is_some() {
             return Err("处理已经运行".into());
         }
         self.last_status = None;
-        let stats = Arc::new(Stats::default());
+        let stats = Stats::default();
+        #[cfg(feature = "acceptance-replay")]
+        let stats = {
+            let mut stats = stats;
+            stats.replay = self.replay.clone().zip(self.trace.clone());
+            stats
+        };
+        let stats = Arc::new(stats);
         match Runtime::new(
             settings,
             self.ai_root.as_deref(),

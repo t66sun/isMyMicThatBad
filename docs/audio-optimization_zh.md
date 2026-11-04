@@ -41,4 +41,6 @@ v0.4.0 发布在采集前以静音开始渲染，保留三周期 FIFO 和额外�
 
 分别以 `six-off`、`rvc` 和 `dsp` 运行匹配对照，以 `digital` 运行扬声器回环。测试语音会从扬声器播放。脚本在生成的构建目标目录中准备独立运行时，每轮单独保存配置、首错状态、可用的 GPU 日志、逐块计时、限幅前峰值和各端点能量。麦克风音频只在内存中处理。比较延迟时保持设备路径、电平、缓冲和监听状态一致。`tests/summarize_chain_evidence.py` 可以汇总原始结果。应用在故障停止后保留队列计数，直到再次启动或主动停止。上一轮 worker 日志位于 `ai/worker.previous.log`。
 
+静音测试使用同一个观察器，构建时启用 `--features custom-protocol,acceptance-replay`。在上述命令加上 `-SilentReplay`，省略 `-SpeakerId`。该模式在真实 48 kHz 麦克风回调内用 WAV 代替采样，分别记录采集时钟与 CABLE Output。耳机监听正常处理，最终向物理端点写零，时间线保留写零前的电平。测量房间声学链或耳机端点本身时使用有声模式。
+
 离线音质对照使用 `tests/chain_quality.py prepare` 和本地 48 kHz 单声道 PCM16 语音生成素材。将新素材及命令输出的时长传入 `tests/ai_inference.py`，指定 `--output-directory` 和 `--float-output`。把六卡配置和导出的四个预设作为 `session.json`、`presets.json` 复制到音质目录。将 `MIC_TEST_QUALITY_DIR` 指向该目录，运行优化版 audio_pipeline 中显式忽略的 `quality_probe::render_matching_inputs_at_each_card`，再执行 `tests/chain_quality.py summarize`。汇总记录造成波形变化的级别及随机试听片段的实测响度，人工听评与客观指标分开记录。

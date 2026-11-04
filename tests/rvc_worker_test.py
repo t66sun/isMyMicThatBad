@@ -16,11 +16,14 @@ class PrewarmedSynthesis(unittest.TestCase):
             graphs.append(shape)
             return forward(value)
 
-        model = SimpleNamespace()
+        sizes = []
+        model = SimpleNamespace(_mic_synthesis_window=(150, 5),
+                                infer=lambda value, skip, length, size: sizes.append(size))
         shapes = ["original", "edited", "original"]
         audio = [worker.prewarmed_synthesis(run_graph, model, shape, abs, -n)
                  for n, shape in enumerate(shapes, 1)]
         self.assertEqual((graphs, audio), (["original", "original"], [1, 2, 3]))
+        self.assertEqual(sizes, [3, 4, 6, 7, 8, 9, 10])
 
 
 if __name__ == "__main__":

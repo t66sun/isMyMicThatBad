@@ -21,8 +21,8 @@ fn device(id: &str) -> cpal::Device {
 }
 
 struct Meter {
-    stream: cpal::Stream,
-    source: Consumer<Frame>,
+    device: Option<(cpal::Stream, Consumer<Frame>)>,
+    consumed: usize,
     frames: Vec<Frame>,
     rate: u32,
 }
@@ -109,22 +109,26 @@ impl Meter {
         };
         stream.play().unwrap();
         Self {
-            stream,
-            source,
+            device: Some((stream, source)),
+            consumed: 0,
             frames: Vec::new(),
             rate,
         }
     }
     fn poll(&mut self) -> (usize, f32) {
-        let start = self.frames.len();
-        while let Ok(frame) = self.source.pop() {
-            self.frames.push(frame);
+        if let Some((_, source)) = &mut self.device {
+            while let Ok(frame) = source.pop() {
+                self.frames.push(frame);
+            }
         }
-        let new = &self.frames[start..];
+        let new = &self.frames[self.consumed..];
+        self.consumed = self.frames.len();
         (new.len(), new.iter().map(|f| f.value).fold(0., f32::max))
     }
     fn pause(&self) {
-        self.stream.pause().unwrap();
+        if let Some((stream, _)) = &self.device {
+            stream.pause().unwrap();
+        }
     }
 }
 fn calibration(reference: &[Frame], output: &[Frame], maximum_ms: usize) -> Value {
@@ -163,6 +167,35 @@ fn calibration(reference: &[Frame], output: &[Frame], maximum_ms: usize) -> Valu
 #[test]
 #[ignore = "plays a synthetic WAV through selected hardware and captures signal envelopes"]
 fn fixed_chain() {
+    run_fixed_chain(None);
+}
+
+#[cfg(feature = "acceptance-replay")]
+#[test]
+#[ignore = "replays a WAV on the capture clock into VB-CABLE, with silent physical monitoring"]
+fn silent_fixed_chain() {
+    run_fixed_chain(Some(replay_audio()));
+}
+
+#[cfg(feature = "acceptance-replay")]
+#[test]
+#[ignore = "runs RVC parameter and graph edits into VB-CABLE without physical playback"]
+fn silent_rvc_live_edits() {
+    super::rvc_edits::run(Some(replay_audio()));
+}
+
+#[cfg(feature = "acceptance-replay")]
+fn replay_audio() -> Arc<[f32]> {
+    let mut samples = wav_samples(&fs::read(env("MIC_TEST_STIMULUS_WAV")).unwrap());
+    let peak = samples.iter().fold(0.0_f32, |p, x| p.max(x.abs()));
+    assert!(peak > 0., "silent fixture");
+    for x in &mut samples {
+        *x *= 0.25 / peak;
+    }
+    samples.into()
+}
+
+fn run_fixed_chain(replay: Option<Arc<[f32]>>) {
     let dir = PathBuf::from(env("MIC_TEST_RUN_DIR"));
     let session: Session =
         serde_json::from_slice(&fs::read(env("MIC_TEST_SESSION")).unwrap()).unwrap();
@@ -171,18 +204,35 @@ fn fixed_chain() {
     let trace = Trace::default();
     let mut engine = Controller::with_ai(env("MIC_TEST_AI_ROOT").into());
     engine.observe(trace.clone());
+    #[cfg(feature = "acceptance-replay")]
+    if let Some(samples) = &replay {
+        engine
+            .replay_capture(samples.clone(), trace.clone())
+            .unwrap();
+    }
     let mut timeline = BufWriter::new(File::create_new(dir.join("timeline.jsonl")).unwrap());
     let mut levels = BufWriter::new(File::create_new(dir.join("levels.jsonl")).unwrap());
     let errors = Arc::new(Mutex::new(Vec::new()));
     let input_id = session.input_id.trim_start_matches("loopback:");
     let speaker_id = env("MIC_TEST_SPEAKER_ID");
-    let mut input = Meter::new(input_id, &errors);
+    let mut input = if replay.is_some() {
+        Meter {
+            device: None,
+            consumed: 0,
+            frames: Vec::new(),
+            rate: 48000,
+        }
+    } else {
+        Meter::new(input_id, &errors)
+    };
     let mut cable = Meter::new(&env("MIC_TEST_CABLE_READER_ID"), &errors);
-    let mut speaker = (input_id != speaker_id).then(|| Meter::new(&speaker_id, &errors));
-    let mut monitor = session
-        .monitoring
-        .then(|| Meter::new(&session.monitor_id, &errors));
-    let stimulus = play_stimulus(errors.clone()).unwrap();
+    let mut speaker =
+        (replay.is_none() && input_id != speaker_id).then(|| Meter::new(&speaker_id, &errors));
+    let mut monitor =
+        (replay.is_none() && session.monitoring).then(|| Meter::new(&session.monitor_id, &errors));
+    let stimulus = replay
+        .is_none()
+        .then(|| play_stimulus(errors.clone()).unwrap());
     // Open and start the independent observers before the engine's first real-time hop.
     // The bounded preroll covers the 60 s ready and 120 s model-open deadlines.
     let start = Instant::now();
@@ -201,6 +251,7 @@ fn fixed_chain() {
     {
         meter.poll();
         meter.frames.clear();
+        meter.consumed = 0;
     }
     let play = Instant::now();
     let mut first = None;
@@ -213,9 +264,49 @@ fn fixed_chain() {
         std::thread::sleep(Duration::from_millis(100));
         let now = Instant::now();
         let status = engine.status();
+        let events = trace.drain();
+        #[cfg(feature = "acceptance-replay")]
+        if let Some(samples) = &replay {
+            for entry in &events {
+                if let mic_engine::trace::Event::ReplayInput {
+                    capture_ns,
+                    offset,
+                    frames,
+                } = entry.event
+                {
+                    for i in (offset.next_multiple_of(96)..offset + frames as u64).step_by(96) {
+                        let power = (i..i + 96)
+                            .map(|j| (samples[j as usize % samples.len()] as f64).powi(2))
+                            .sum::<f64>();
+                        input.frames.push(Frame {
+                            time: capture_ns as f64 / 1e9 + (i - offset) as f64 / 48000.,
+                            value: (power / 96.).sqrt() as f32,
+                        });
+                    }
+                }
+            }
+        }
         let incoming = input.poll();
         let received = cable.poll();
-        let heard = monitor.as_mut().map(Meter::poll);
+        let heard = if replay.is_some() && session.monitoring {
+            Some(
+                events
+                    .iter()
+                    .filter_map(|sample| match sample.event {
+                        mic_engine::trace::Event::Render {
+                            monitor: true,
+                            peak,
+                            ..
+                        } => Some(peak),
+                        _ => None,
+                    })
+                    .fold((0usize, 0.0_f32), |(count, max), peak| {
+                        (count + 1, max.max(peak))
+                    }),
+            )
+        } else {
+            monitor.as_mut().map(Meter::poll)
+        };
         let played = speaker.as_mut().map(Meter::poll);
         let floor = 10f32.powf(-50. / 20.);
         if incoming.1 >= floor {
@@ -231,7 +322,7 @@ fn fixed_chain() {
             first = Some(now);
             baseline = Some(status.clone());
         }
-        for event in trace.drain() {
+        for event in events {
             writeln!(timeline, "{}", serde_json::to_string(&event).unwrap()).unwrap();
         }
         writeln!(levels,"{}",json!({"t_us":trace.now_us(),"input":incoming,"cable":received,"monitor":heard,"stimulus":played,"status":status})).unwrap();
@@ -316,7 +407,7 @@ fn fixed_chain() {
     } else {
         "stable"
     };
-    let result = json!({"outcome":outcome,"observer_rates":{"input":input.rate,"cable":cable.rate,"speaker":speaker.as_ref().map(|m|m.rate),"monitor":monitor.as_ref().map(|m|m.rate)},"engine":status,"baseline":baseline,"first_output_s":first.map(|t|t.duration_since(play).as_secs_f64()),"seconds_after_output":first.map(|t|end.duration_since(t).as_secs_f64()),"engine_setup_s":play.duration_since(start).as_secs_f64(),"latency":latency,"stimulus_to_mic":acoustic,"monitor_match":monitor_match,"trace_lost":trace.lost(),"callback_errors":callbacks});
+    let result = json!({"outcome":outcome,"capture_clocked_replay":replay.is_some(),"monitor_output_forced_to_zero":replay.is_some() && session.monitoring,"observer_rates":{"input":input.rate,"cable":cable.rate,"speaker":speaker.as_ref().map(|m|m.rate),"monitor":monitor.as_ref().map(|m|m.rate)},"engine":status,"baseline":baseline,"first_output_s":first.map(|t|t.duration_since(play).as_secs_f64()),"seconds_after_output":first.map(|t|end.duration_since(t).as_secs_f64()),"engine_setup_s":play.duration_since(start).as_secs_f64(),"latency":latency,"stimulus_to_mic":acoustic,"monitor_match":monitor_match,"trace_lost":trace.lost(),"callback_errors":callbacks});
     fs::write(
         dir.join("result.json"),
         serde_json::to_vec_pretty(&result).unwrap(),

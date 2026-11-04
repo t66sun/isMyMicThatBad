@@ -16,11 +16,16 @@ os.environ.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
 
 
 def prewarmed_synthesis(run_graph, model, shape, forward, *inputs):
-    # The first synthesis call is made by open() during prewarm. A formant edit
-    # can change the output length; capturing that new graph stalls a live hop.
+    # open() makes the first call at neutral formant. Prepare convolution
+    # plans there, before capture starts; keep only the neutral CUDA graph.
     prepared = getattr(model, "_mic_synthesis_shape", None)
     if prepared is None:
         model._mic_synthesis_shape = shape
+        skip, length = model._mic_synthesis_window
+        # The supported -12..+12 semitones cover ceil(length / 2)..2 * length.
+        for frames in range((length + 1) // 2, 2 * length + 1):
+            if frames != length:
+                model.infer(*inputs, skip, length, frames)
     elif shape != prepared:
         return forward(*inputs)
     return run_graph(model, shape, forward, *inputs)
@@ -95,21 +100,32 @@ class Streams:
             raise ValueError("Select an existing RVC .index file")
         if self.streams and any(engine.rvc.pth_path != str(model) for engine in self.streams.values()):
             raise ValueError("Stop processing before changing the RVC model")
+        previous = next((s for s in self.streams.values()
+                         if s.rvc is self.last_rvc and s.rvc.index_path == index), None)
         engine = self.engine_type(dict(rvc_root=str(self.root / "rvc"), model_path=str(model),
                                       index_path=index, sample_rate=48000, block_ms=260,
                                       crossfade_ms=40, extra_ms=1500))
         if self.torch.device(engine.config.device).type != "cuda":
             raise RuntimeError("RVC requires a supported CUDA GPU")
-        with self.torch.inference_mode():
-            engine.prewarm()
-            engine.process(self.np.zeros(HOP, dtype=self.np.float32), 0, 0, 0.5 if index else 0,
-                           0.5, -60, 0)
-            engine.input_wav.zero_()
-            engine.input_wav_res.zero_()
-            engine.rms_buffer.fill(0)
-            engine.sola_buffer.zero_()
-            engine.rvc.cache_pitch.zero_()
-            engine.rvc.cache_pitchf.zero_()
+        engine.rvc.net_g._mic_synthesis_window = engine.skip_head, engine.return_length
+        if previous is not None:
+            # The pipe serves both sides of a live graph transition. Reuse the
+            # stateless kernels; each new stream starts with its own zeroed history.
+            engine.resampler = previous.resampler
+            engine.resampler2 = previous.resampler2
+            engine.rvc.resample_kernel = previous.rvc.resample_kernel
+        else:
+            with self.torch.inference_mode():
+                engine.prewarm()
+                # Prime index retrieval and non-neutral formant resampling as well.
+                engine.process(self.np.zeros(HOP, dtype=self.np.float32), 0, 1, 0.5 if index else 0,
+                               0.5, -60, 0)
+                engine.input_wav.zero_()
+                engine.input_wav_res.zero_()
+                engine.rms_buffer.fill(0)
+                engine.sola_buffer.zero_()
+                engine.rvc.cache_pitch.zero_()
+                engine.rvc.cache_pitchf.zero_()
         if engine.block_frame != HOP:
             raise ValueError("RVC block size mismatch")
         self.streams[request["id"]] = engine

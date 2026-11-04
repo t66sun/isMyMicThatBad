@@ -4,13 +4,16 @@ param(
     [Parameter(Mandatory)][string]$AiRoot,
     [Parameter(Mandatory)][string]$EvidenceDirectory,
     [Parameter(Mandatory)][string]$StimulusWav,
-    [Parameter(Mandatory)][string]$SpeakerId,
+    [string]$SpeakerId,
     [Parameter(Mandatory)][string]$CableReaderId,
     [ValidateSet('six-on','six-off','rvc','dsp','digital')][string]$Scenario = 'six-on',
     [ValidateRange(1,5)][int]$Repeats = 1,
-    [ValidateRange(1,1800)][int]$Seconds = 90
+    [ValidateRange(1,1800)][int]$Seconds = 90,
+    [switch]$SilentReplay
 )
 $ErrorActionPreference = 'Stop'
+if (!$SilentReplay -and !$SpeakerId) { throw 'Select the stimulus output endpoint' }
+if ($SilentReplay -and $Scenario -eq 'digital') { throw 'Silent replay uses the selected capture clock' }
 $repo = Split-Path -Parent $PSScriptRoot
 $exe = (Resolve-Path -LiteralPath $TestExe).Path
 $evidence = (Resolve-Path -LiteralPath $EvidenceDirectory).Path
@@ -44,7 +47,7 @@ try {
     $env:MIC_TEST_AI_ROOT = $runtime
     $env:MIC_TEST_STIMULUS_WAV = (Resolve-Path -LiteralPath $StimulusWav).Path
     $env:MIC_TEST_SECONDS = "$Seconds"
-    $env:MIC_TEST_SPEAKER_ID = $SpeakerId
+    $env:MIC_TEST_SPEAKER_ID = if ($SilentReplay) { 'no-playback' } else { $SpeakerId }
     $env:MIC_TEST_CABLE_READER_ID = $CableReaderId
     $sha = (Get-FileHash -LiteralPath $exe).Hash
     $stimulusHash = (Get-FileHash -LiteralPath $env:MIC_TEST_STIMULUS_WAV).Hash
@@ -59,7 +62,8 @@ try {
     }
     $trials = @()
     for ($i=1; $i -le $Repeats; $i++) {
-        $dir = Join-Path $evidence ("{0}-{1}-{2}s-{3}" -f (Get-Date -Format 'yyyyMMdd-HHmmssfff'),$Scenario,$Seconds,$i)
+        $route = if ($SilentReplay) { "$Scenario-replay" } else { $Scenario }
+        $dir = Join-Path $evidence ("{0}-{1}-{2}s-{3}" -f (Get-Date -Format 'yyyyMMdd-HHmmssfff'),$route,$Seconds,$i)
         [void](New-Item -ItemType Directory -Path $dir)
         $env:MIC_TEST_RUN_DIR = $dir
         $env:MIC_TEST_SESSION = "$dir/session.json"
@@ -69,6 +73,7 @@ try {
             start_utc = [DateTime]::UtcNow.ToString('o')
             test_sha256 = $sha
             scenario = $Scenario
+            capture_clocked_replay = $SilentReplay.IsPresent
             seconds = $Seconds
             sample_rate = 48000
             buffer_ms = $session.bufferMs
@@ -89,7 +94,8 @@ try {
             if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
                 $gpu = Start-Process -FilePath 'nvidia-smi.exe' -ArgumentList '--query-gpu=timestamp,pstate,utilization.gpu,clocks.sm,temperature.gpu,memory.used,power.draw','--format=csv','-l','1' -WindowStyle Hidden -PassThru -RedirectStandardOutput "$dir/gpu.csv" -RedirectStandardError "$dir/gpu-errors.log"
             }
-            & $exe --ignored --exact evidence::fixed_chain --nocapture *> "$dir/test.log"
+            $test = if ($SilentReplay) { 'evidence::silent_fixed_chain' } else { 'evidence::fixed_chain' }
+            & $exe --ignored --exact $test --nocapture *> "$dir/test.log"
             $exitCode = $LASTEXITCODE
         } finally {
             if ($gpu -and !$gpu.HasExited) { $gpu.Kill(); $gpu.WaitForExit() }
