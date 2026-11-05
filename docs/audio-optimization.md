@@ -16,6 +16,12 @@ The listener chose the clear voice at matched loudness. On the same RVC output, 
 
 Raw settings, 2 ms match windows, per-block timing, counter histories and rejected runs are in `research/audio-acceptance/artifacts/20261105-000235-voice-fix/`. The original incidents are in `research/audio-acceptance/artifacts/20261104-224546-six-card/`.
 
+## 2026-11-05 quiet-speech controls
+
+Same-input offline controls isolated the Female and Ethereal presets' -50 dB gate as the first source of quiet-speech loss. Against the same preset without its gate, attenuation exceeding 6 dB for at least 20 ms totaled 1,680 ms for Female and 1,650 ms for Ethereal. Lowering only the threshold to -60 dB reduced both to 20 ms and removed the one-second cold soft-onset silence. Labels were fixed from the input before processing; outputs were aligned by declared DSP delay. Pitch/formant targets and gate timing stay unchanged. The exported-preset onset/tail regression fails with the old presets and passes with the new ones.
+
+The noise cost is explicit: stationary -65 dB noise still closes the gate, while -60 to -55 dB noise can pass. At -55 dB input noise, settled output measured -57.65 dB for Female and -62.57 dB for Ethereal, where the old presets were silent. The two 15.75-second listening pairs used one fixed gain per clip at -23 LUFS. The user heard no obvious difference in either pair; improved naturalness has not been demonstrated. Evidence is in `research/audio-acceptance/artifacts/20261105-214600-voice-quality/` (`controls`, `gate-candidates`, `noise-controls`, and the recorded listening response).
+
 ## Constraints to preserve
 
 - Qualified configuration: Intel microphone, VB-CABLE 3072 samples / 48 kHz, 5 ms app buffer, monitoring off. Cable-only p95 measured 56.29 ms; this boundary differs from the full path, so subtraction cannot isolate app latency.

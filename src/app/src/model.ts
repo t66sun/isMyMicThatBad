@@ -41,7 +41,7 @@ export const builtins: Preset[] = [
   {id:'builtin-metal', name:'金属音', chain:[node('frequency',{shift_hz:100},'metal-f'),node('distortion',{drive_db:6,mix:25},'metal-d'),node('gain',{gain_db:-6},'metal-g')]},
   {id:'builtin-phone', name:'电话音', chain:[node('highpass',{cutoff:300},'phone-h'),node('lowpass',{cutoff:3400},'phone-l')]},
   {id:'builtin-female', name:'女声', chain:[
-    node('gate',{threshold_db:-50},'female-gate'), node('highpass',{cutoff:80},'female-high'),
+    node('gate',{threshold_db:-60},'female-gate'), node('highpass',{cutoff:80},'female-high'),
     node('pitch',{semitones:5},'female-pitch'), node('formant',{semitones:2.5},'female-formant'),
     node('eq',{low_gain_db:-2,mid_gain_db:1,mid_freq:2400,high_gain_db:2},'female-eq'),
     node('compressor',{threshold_db:-20,ratio:2,makeup_db:2},'female-compressor'), node('gain',{gain_db:-3},'female-gain')]},
@@ -55,7 +55,7 @@ export const builtins: Preset[] = [
     node('eq',{low_gain_db:2,low_freq:150,mid_gain_db:1,mid_freq:1500,high_gain_db:1},'broadcast-eq'),
     node('compressor',{makeup_db:3},'broadcast-compressor'), node('gain',{gain_db:-3},'broadcast-output')]},
   {id:'builtin-ethereal', name:'空灵声', chain:[
-    node('gate',{threshold_db:-50},'ethereal-gate'), node('pitch',{semitones:3},'ethereal-pitch'),
+    node('gate',{threshold_db:-60},'ethereal-gate'), node('pitch',{semitones:3},'ethereal-pitch'),
     node('formant',{semitones:1},'ethereal-formant'), node('eq',{high_gain_db:2},'ethereal-eq'),
     node('reverb',{room:70,damping:45,mix:25},'ethereal-reverb'), node('gain',{gain_db:-4},'ethereal-output')]}
 ];

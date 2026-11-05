@@ -32,6 +32,8 @@ Frequency shift adds or subtracts a fixed number of Hz from every frequency, pro
 
 The noise gate controls the noise floor between phrases; it does not continuously remove noise while you speak. Distortion's "clip" control moves between soft saturation and hard clipping; 0% keeps the previous behavior. Adjacent pitch/formant cards share analysis to reduce latency.
 
+Female and Ethereal now use a -60 dB gate threshold to preserve quiet speech and fading words. Reselect the preset to apply this setting; saved chains keep their own values. More background noise near this level can pass through. Pitch, formant, gate attack, hold and release are unchanged.
+
 Tremolo makes volume rise and fall periodically: rate is adjustable from 0.1–20 Hz and depth from 0–100%. 0% depth keeps the original volume; 100% varies between the original volume and silence. It changes neither pitch nor algorithmic latency.
 
 Bitcrusher adjusts bit depth from 2–16 bit, sample hold from 1–48 samples and mix from 0–100%. Lower bit depth sounds coarser; longer hold updates samples more slowly (at 48 kHz, holding 4 samples updates 12,000 times per second). The processed signal is quantized within ±1; 0% mix keeps the original. It adds no algorithmic latency and does not change the device sample rate.

@@ -96,3 +96,45 @@ fn render_matching_inputs_at_each_card() {
         measure(&dir, label, &preset.chain, &dry);
     }
 }
+
+#[test]
+#[ignore = "offline release measurement; provide fresh dry.f32 and cases.json in MIC_TEST_QUALITY_DIR"]
+fn render_voice_cases() {
+    let dir = PathBuf::from(std::env::var_os("MIC_TEST_QUALITY_DIR").unwrap());
+    let cases: Vec<Preset> =
+        serde_json::from_slice(&fs::read(dir.join("cases.json")).unwrap()).unwrap();
+    let signal = read_samples(&dir.join("dry.f32"));
+    for case in cases {
+        measure(&dir, &case.id, &case.chain, &signal);
+    }
+}
+
+#[test]
+#[ignore = "export the actual editor presets and set MIC_TEST_PRESETS_FILE"]
+fn speech_presets_preserve_a_soft_onset_and_fading_word() {
+    let presets: Vec<Preset> = serde_json::from_slice(
+        &fs::read(std::env::var_os("MIC_TEST_PRESETS_FILE").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let input: Vec<f32> = (0..48000)
+        .map(|i| {
+            let db = -56.0 - 10.0 * ((i as f32 - 28800.0) / 19200.0).max(0.0);
+            (std::f32::consts::TAU * 150.0 * i as f32 / 48000.0).sin()
+                * 2.0_f32.sqrt()
+                * 10.0_f32.powf(db / 20.0)
+        })
+        .collect();
+    for id in ["builtin-female", "builtin-ethereal"] {
+        let preset = presets.iter().find(|p| p.id == id).unwrap();
+        let gate = preset.chain.iter().find(|c| c.kind == "gate").unwrap();
+        let output = super::render(std::slice::from_ref(gate), &input, BLOCK);
+        for (start, end) in [(960, 9600), (43200, 48000)] {
+            assert!(
+                super::rms(&output[start..end]) > super::rms(&input[start..end]) * 0.7,
+                "{} loses quiet speech at {} ms",
+                preset.name,
+                start / 48
+            );
+        }
+    }
+}
