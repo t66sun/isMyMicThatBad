@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory)][string]$StimulusWav,
     [string]$SpeakerId,
     [Parameter(Mandatory)][string]$CableReaderId,
-    [ValidateSet('six-on','six-off','rvc','dsp','digital')][string]$Scenario = 'six-on',
+    [ValidateSet('six-on','six-off','rvc','dsp','digital','preset')][string]$Scenario = 'six-on',
     [ValidateRange(1,5)][int]$Repeats = 1,
     [ValidateRange(1,1800)][int]$Seconds = 90,
     [switch]$SilentReplay
@@ -31,9 +31,11 @@ if (!(Test-Path -LiteralPath "$runtime/ready.json")) {
     Copy-Item -LiteralPath "$source/ready.json" -Destination "$runtime/ready.json"
 }
 $session = Get-Content -LiteralPath $SessionPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if (($session.chain.type -join ',') -ne 'rvc,highpass,distortion,gain,bitcrusher,frequency') { throw 'Expected the saved six-card chain' }
-if ($session.bufferMs -ne 5 -or @($session.chain | Where-Object { !$_.enabled }).Count) { throw 'Expected six enabled cards and a 5 ms buffer' }
-$session.monitoring = $Scenario -in 'six-on','rvc','dsp'
+if ($Scenario -eq 'preset') {
+    if (!$session.chain.Count -or 'rvc' -in $session.chain.type) { throw 'Select an ordinary DSP preset' }
+} elseif (($session.chain.type -join ',') -ne 'rvc,highpass,distortion,gain,bitcrusher,frequency') { throw 'Expected the saved six-card chain' }
+if ($session.bufferMs -ne 5 -or @($session.chain | Where-Object { !$_.enabled }).Count) { throw 'Expected enabled cards and a 5 ms buffer' }
+$session.monitoring = $Scenario -in 'six-on','rvc','dsp','preset'
 switch ($Scenario) {
     'six-off' { $session.monitoring = $false }
     'rvc' { $session.chain = @($session.chain | Where-Object type -eq 'rvc') }

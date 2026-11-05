@@ -2,6 +2,18 @@
 
 English | [中文](handoff_zh.md)
 
+## 2026-11-06 local optimization build
+
+Replacement executable: `research/audio-acceptance/artifacts/20261106-022300-monitor-headroom/isMyMicThatBad-optimized.exe`. Close the old app, copy this into the existing portable directory as `isMyMicThatBad.exe`, and retain its libraries, resources, `portable.marker` and `data/`. SHA-256: `0dd4236f9d0b47183bf1f0bcb804b86090b38613a64602e73115bff61ba4c682`.
+
+- Female/Ethereal gate thresholds are -60 dB. Reselect a preset to apply it; saved chains retain their values. The measured quiet-speech loss fell from 1,680/1,650 ms to 20 ms each, at the cost of more near-threshold noise. The listener heard no obvious A/B difference, so pitch naturalness improvement is unproven.
+- RVC retains the B voice, model, retrieval, context and 200 ms hop. Two CPU threads saved 47–54% worker CPU time in three game-running pairs. The user authorized 160 ms more buffering: 420 ms reply reserve / 620 ms declared latency. Monitor output now starts with silence before capture; the recorded startup underrun fails its regression under the old ordering.
+- Final AI qualification: three 90-second starts and a 1,800.03-second silent soak passed, with no application counter growth or lost records. TANCHJIM capture-clock replay to VB-CABLE, 5 ms app buffer, monitoring enabled with physical output zero: p95 836.46 ms, 105/114 matched windows. Actual total CPU/GPU medians were 57%/91%. These are synthetic-load results; final game coexistence and game FPS remain unmeasured.
+- Female passed three starts. Ethereal passed two and failed one with six underruns during a 97.56% CPU spike. Keep this saturated-load limit visible; no all-preset long-run pass is claimed. All measured final outputs had zero clipped samples.
+- Required gate: 53 Rust tests, 14 editor tests, TypeScript and the optimized build passed; 18 Rust tests are explicitly ignored by that gate. Additional manual onset/tail, controlled-worker, sample-parity, hardware and final live-edit checks are recorded separately. Final executable device enumeration passed. Test audio and workload helpers have all stopped.
+
+[Conditions and measurements](audio-optimization.md#2026-11-06-resource-contention). Raw evidence and the final executable are under `20261106-022300-monitor-headroom/`; prior failed trials stay in their original dated directories. Listening clips remain in `20261105-214600-voice-quality/gate-candidates/` (`female-A.wav`, `female-B.wav`, `ethereal-A.wav`, `ethereal-B.wav`).
+
 ## 2026-11-05 local audio build
 
 The local build includes the RVC timing fix and the **AI 清晰人声** preset selected in blind listening. The original six-card microphone route qualified for a 30-minute soak at a 520 ms reserve. The final 460 ms configuration completed a second 30-minute soak using the physical capture clock and silent headphone output. See the [measurement conditions and evidence](audio-optimization.md#2026-11-05-rvc-measurements).

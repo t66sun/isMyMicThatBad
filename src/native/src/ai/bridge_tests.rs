@@ -141,3 +141,45 @@ fn delayed_pipe_reply_on_either_side_of_the_playable_reserve() {
         fs::remove_dir(root).unwrap();
     }
 }
+
+#[test]
+fn game_inference_spike_fits_the_playable_reserve() {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("mic-game-spike-{}-{stamp}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    let config = FilterConfig {
+        id: "spike".into(),
+        kind: "rvc".into(),
+        enabled: true,
+        model: None,
+        params: KEYS.iter().map(|key| (key.to_string(), 0.)).collect(),
+    };
+    let mut filter = Rvc::open(service_with_gate(&root), &root, &config, None).unwrap();
+    let mut block = [0.; BLOCK];
+    // Advance the audio clock through 200 ms collection plus the measured
+    // 370 ms game-contention reply. A barrier keeps wall-clock jitter out.
+    let consumed = (HOP + 370 * 48) / BLOCK * BLOCK;
+    for _ in 0..consumed / BLOCK {
+        filter.process(&[0.25; BLOCK], &mut block);
+    }
+    wait_for(|| root.join("arrived").exists());
+    let before_reply = filter.failure();
+    fs::write(root.join("release"), []).unwrap();
+    wait_for(|| filter.output.slots() >= HOP);
+    if before_reply.is_none() {
+        for _ in 0..LATENCY.saturating_sub(consumed) / BLOCK + 2 {
+            filter.process(&[0.25; BLOCK], &mut block);
+        }
+    }
+    let after_reply = filter.failure();
+    drop(filter);
+    fs::remove_file(root.join("arrived")).unwrap();
+    fs::remove_file(root.join("release")).unwrap();
+    fs::remove_dir(root).unwrap();
+    assert!(before_reply.is_none(), "370 ms reply exhausted the reserve");
+    assert!(after_reply.is_none());
+    assert_eq!(block, [0.5; BLOCK]);
+}

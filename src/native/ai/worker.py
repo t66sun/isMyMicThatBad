@@ -10,9 +10,10 @@ import time
 import traceback
 
 HOP = 9_600
+CPU_THREADS = 2
 os.environ.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1",
                   TORCH_FORCE_WEIGHTS_ONLY_LOAD="1",
-                  OMP_NUM_THREADS="4", OPENBLAS_NUM_THREADS="1")
+                  OMP_NUM_THREADS=str(CPU_THREADS), OPENBLAS_NUM_THREADS="1")
 
 
 def prewarmed_synthesis(run_graph, model, shape, forward, *inputs):
@@ -45,7 +46,7 @@ class Streams:
     def __init__(self, root):
         import numpy as np
         import torch
-        torch.set_num_threads(4)
+        torch.set_num_threads(CPU_THREADS)
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA GPU is unavailable; RVC processing has stopped")
         self.np = np
@@ -64,7 +65,7 @@ class Streams:
         from infer import rtrvc
         rtrvc.run_cuda_graph = partial(prewarmed_synthesis, rtrvc.run_cuda_graph)
         import faiss
-        faiss.omp_set_num_threads(4)
+        faiss.omp_set_num_threads(CPU_THREADS)
         original = rtrvc.RVC
         original_index_rate = original.change_index_rate
 
@@ -129,7 +130,7 @@ class Streams:
         if engine.block_frame != HOP:
             raise ValueError("RVC block size mismatch")
         self.streams[request["id"]] = engine
-        return {"ok": True, "frames": HOP, "latency": HOP + 12_480}
+        return {"ok": True, "frames": HOP, "latency": HOP + 20_160}
 
     def process(self, request, data):
         engine = self.streams[request["id"]]

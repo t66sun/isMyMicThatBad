@@ -19,8 +19,9 @@ use std::{
 };
 
 pub const HOP: usize = 9_600;
-// Collect 200 ms of input, then allow the measured 260 ms response budget.
-pub const LATENCY: usize = HOP + 12_480;
+// Collect 200 ms of input; 420 ms of reply reserve covers the observed
+// 370 ms game-contention spikes with 50 ms for bridge/audio scheduling.
+pub const LATENCY: usize = HOP + 20_160;
 const KEYS: [&str; 4] = ["pitch", "formant", "index", "rms"];
 const REVISION: &str = "81eed5e8f68b6bed1789f682fe78cdd324495afc";
 
@@ -620,7 +621,7 @@ mod tests {
 
     #[test]
     fn exhausted_latency_reserve_silences_and_permanently_fails() {
-        assert_eq!(LATENCY, 22_080);
+        assert_eq!(LATENCY, 29_760);
         const BLOCK: usize = 256;
         let tail = BLOCK / 2;
         let (mut rvc, captured_input, _prepared_output) = rvc_without_worker_with_tail(tail);
