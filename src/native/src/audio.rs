@@ -18,6 +18,7 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+mod startup;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -638,7 +639,7 @@ impl Runtime {
             })
             .map_err(|e| e.to_string())?;
         let _ = stats.worker.set(worker.thread().clone());
-        let mut runtime = Self {
+        let runtime = Self {
             capture,
             output,
             monitor,
@@ -650,8 +651,16 @@ impl Runtime {
         };
         // Start the render driver with silence before capture/output priming, not after it.
         let _ = runtime.stats.started.set(Instant::now());
-        runtime.output.play().map_err(|e| e.to_string())?;
-        runtime.capture.play().map_err(|e| e.to_string())?;
+        startup::start(
+            || runtime.output.play().map_err(|e| e.to_string()),
+            || {
+                if let Some(stream) = runtime.monitor.as_ref().filter(|_| settings.monitoring) {
+                    stream.play().map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            },
+            || runtime.capture.play().map_err(|e| e.to_string()),
+        )?;
         let deadline = Instant::now() + Duration::from_millis(750);
         while !runtime.stats.ready.load(Ordering::Relaxed)
             && !runtime.stats.stop.load(Ordering::Relaxed)
@@ -665,9 +674,6 @@ impl Runtime {
                 .snapshot(false)
                 .error
                 .unwrap_or_else(|| "未收到麦克风音频，请检查设备和 Windows 麦克风权限".into()));
-        }
-        if settings.monitoring {
-            runtime.set_monitoring(true)?;
         }
         Ok(runtime)
     }
