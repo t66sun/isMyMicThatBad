@@ -188,7 +188,7 @@ def run(args):
                     "op": "open", "id": stream_id,
                     "path": str(model_path), "index": str(index_path),
                 }, deadline)
-                if opened.get("frames") != HOP or opened.get("latency") != 22_080:
+                if opened.get("frames") != HOP or opened.get("latency") != 29_760:
                     raise RuntimeError(f"unexpected open response: {opened}")
 
             params = {"pitch": 0, "formant": 0, "index": 50, "rms": 50}
