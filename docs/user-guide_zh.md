@@ -4,6 +4,8 @@
 
 ## 开始使用
 
+下载完整 AI 分卷包时，将全部 `.zip.001`、`.zip.002` 及后续分卷与 `Join-Release.ps1` 放在同一目录。在该目录打开 PowerShell，运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\Join-Release.ps1`。脚本会校验各分卷及合并后的 ZIP，然后按下述步骤解压。完整包包含 NVIDIA CUDA 环境和默认音色模型，预选 AI 清晰人声，监听关闭，不含个人设备选择。
+
 1. 将便携 ZIP 解压到可写目录，运行 isMyMicThatBad.exe。此版只提供便携包。
 2. ZIP 包含应用所需的微软 C++ 运行库，请保留它们与程序在同一目录。界面依赖系统 WebView2。缺少时从 https://developer.microsoft.com/microsoft-edge/webview2/ 安装 Evergreen Runtime。
 3. 点击标题栏齿轮打开设置。未安装 VB-CABLE 时，点击“安装随包附带的 VB-CABLE”，在官方安装窗口操作并允许管理员提示，然后重启 Windows。

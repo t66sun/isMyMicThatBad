@@ -4,6 +4,8 @@ English | [中文](user-guide_zh.md)
 
 ## Getting started
 
+For a split complete-AI download, put every `.zip.001`, `.zip.002` and subsequent part together with `Join-Release.ps1` in one directory. Open PowerShell there and run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Join-Release.ps1`. The script checks each part and the combined ZIP. Then follow the extraction steps below. The full package includes the NVIDIA CUDA runtime and default voice model, with AI 清晰人声 selected, monitoring off and no personal device selections.
+
 1. Extract the portable ZIP into a writable directory and run `isMyMicThatBad.exe`. This release is portable only.
 2. The ZIP includes the Microsoft C++ runtime libraries the app needs; keep them next to the executable. The interface requires system WebView2. If it is missing, install the Evergreen Runtime from https://developer.microsoft.com/microsoft-edge/webview2/.
 3. Click the gear in the title bar to open settings. If VB-CABLE is not installed, click "Install the bundled VB-CABLE", complete the official installer and allow the administrator prompt, then restart Windows.

@@ -6,6 +6,8 @@
 
 从 [GitHub Releases](https://github.com/t66sun/isMyMicThatBad/releases) 下载 Windows x64 便携 ZIP。使用说明和已知音频限制见[用户指南](user-guide_zh.md)。
 
+完整 AI 下载包按 GitHub 附件大小限制拆成编号分卷。将全部 ZIP 分卷和 `Join-Release.ps1` 下载到同一目录，运行脚本校验并合并后，再解压得到的 ZIP。包内附带本地 NVIDIA AI 环境和默认音色模型，不包含个人设置。
+
 ## 架构
 
 麦克风进入有界 WASAPI 队列、有序单声道 DSP 链和 CABLE Input；其他应用捕获 CABLE Output。可选耳机监听独立调整时钟。处理使用 48 kHz、256 帧块。

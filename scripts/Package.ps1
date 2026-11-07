@@ -138,7 +138,7 @@ $($acceptance | ConvertTo-Json -Depth 20)
 
 Commit: $commit
 
-Windows x64 portable voice changer with 14 filters and 7 built-in presets. Adds bitcrusher, original-audio comparison and one reorderable local RVC AI card. RVC v1/v2 model and optional index selection persist with presets; GPU inference runs in an isolated local process and failures stop output with an error. AI preparation downloads the isolated runtime once; packages built with -AiRuntimePath include the prepared runtime and default Saisho Utane voice model with its attribution. Portable settings and the AI runtime live under data beside the executable.
+Windows x64 portable voice changer with 14 filters and 8 built-in presets, including AI 清晰人声. Female and Ethereal preserve quieter speech with a -60 dB gate. Local RVC uses two CPU threads and a 200 ms input hop plus 420 ms reply reserve; headphone rendering starts silently before capture. RVC v1/v2 model and optional index selection persist with presets; GPU inference runs in an isolated local process and failures stop output with an error. AI preparation downloads the isolated runtime once; packages built with -AiRuntimePath include the prepared runtime and default Saisho Utane voice model with its attribution. Portable settings and the AI runtime live under data beside the executable.
 
 Validation scope and results: $($acceptance.scope)
 

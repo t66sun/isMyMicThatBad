@@ -6,6 +6,8 @@ A Windows voice changer with a frosted-glass filter-card editor, configurable au
 
 Download the portable Windows x64 ZIP from [GitHub Releases](https://github.com/t66sun/isMyMicThatBad/releases). Usage and known audio limitations are in [the user guide](docs/user-guide.md).
 
+The complete AI download is split into numbered ZIP parts to fit GitHub's attachment limit. Download every part and `Join-Release.ps1` into one directory, run the script to verify and combine them, then extract the resulting ZIP. The package includes the local NVIDIA AI runtime and default voice model; personal settings are not included.
+
 ## Architecture
 
 The microphone feeds bounded WASAPI queues, an ordered mono DSP chain and CABLE Input; other applications capture CABLE Output. Optional headphone monitoring adapts its clock independently. Processing uses 48 kHz, 256-frame blocks.
