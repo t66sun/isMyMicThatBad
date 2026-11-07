@@ -2,7 +2,7 @@
 
 English | [中文](docs/TODO_zh.md)
 
-- [ ] Publish v0.4.1 with the pending optimization commits and the complete portable AI runtime after the build, exact-binary acceptance and extracted-package gates pass.
+- [x] Publish v0.4.1 with the pending optimization commits and the complete portable AI runtime. Build, exact-binary acceptance, independent extraction, GPU inference, volume reassembly and all nine GitHub asset hashes passed; the release is public.
 - [x] Locate the first attenuation of soft speech and word endings in the Female and Ethereal presets using aligned, same-input controls: the -50 dB gate suppresses quiet speech.
 - [x] Repair the confirmed cause while preserving pitch/formant targets. The -60 dB candidate passes the exported-preset onset/tail regression; the user heard no obvious A/B difference, so naturalness improvement remains unproven.
 - [x] Compare resource candidates while Probably Stolen keeps running. Two CPU threads save 47–54% process CPU time in three pairs, but the 260 ms reply reserve still fails native short runs. Higher-priority CUDA execution and pitch overlap were rejected.

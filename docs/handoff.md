@@ -2,6 +2,16 @@
 
 English | [中文](handoff_zh.md)
 
+## 2026-11-07 v0.4.1 GitHub release
+
+[v0.4.1 is published](https://github.com/t66sun/isMyMicThatBad/releases/tag/v0.4.1) from source commit `b5a8232aa198e64f4a268226eb518426613588d2`. The complete portable AI ZIP is 3,783,572,210 bytes and includes Python/CUDA, RVC, base models, the default Saisho Utane voice, runtime libraries and license notices. Its default AI 清晰人声 settings contain no personal device selections; monitoring is off.
+
+GitHub carries four numbered ZIP parts, `Join-Release.ps1`, checksums and source/acceptance records. The joiner was run locally and reproduced the original ZIP. All nine uploaded assets matched GitHub's SHA-256 and size before publication. Complete ZIP SHA-256: `6ef42f3d4e0d0ee12574ec75db03641b4c156b0a60ea9fdc38bcc0d60eb6b415`. Executable SHA-256: `512da70545fba42e512e9f9a9a5d9c5ec59562043749fd0280f7c6f8d4102133`.
+
+Fresh release checks passed: 53 Rust tests, 14 editor tests, TypeScript, optimized build, the unmodified packaging gate and independent extraction. The exact executable ran the real TANCHJIM microphone to VB-CABLE for 60 seconds at 5 ms with monitoring off and zero application underruns/overflows. Native model/index selection with Unicode and spaces, cancellation and restart persistence passed. The extracted Python/CUDA runtime produced finite, nonzero converted audio, and the executable's embedded worker matched the verified source. No physical playback or microphone recording was used. The GPU probe's cold runtime/model startup and processing took 78.11 seconds.
+
+The preceding 30-minute synthetic-load qualification remains historical evidence with unchanged audio implementation; no new acoustic latency or 30-minute test is claimed for this release. The saturated-CPU underruns and pending final game/FPS verification below remain open. Evidence: `research/audio-acceptance/artifacts/20261107-release-v0.4.1/`; local package: `release/v0.4.1/`.
+
 ## 2026-11-06 local optimization build
 
 Replacement executable: `research/audio-acceptance/artifacts/20261106-022300-monitor-headroom/isMyMicThatBad-optimized.exe`. Close the old app, copy this into the existing portable directory as `isMyMicThatBad.exe`, and retain its libraries, resources, `portable.marker` and `data/`. SHA-256: `0dd4236f9d0b47183bf1f0bcb804b86090b38613a64602e73115bff61ba4c682`.

@@ -2,6 +2,16 @@
 
 [English](handoff.md) | 中文
 
+## 2026-11-07 v0.4.1 GitHub 发布
+
+[v0.4.1 已发布](https://github.com/t66sun/isMyMicThatBad/releases/tag/v0.4.1)，源码提交为 `b5a8232aa198e64f4a268226eb518426613588d2`。完整便携 AI ZIP 为 3,783,572,210 字节，包含 Python／CUDA、RVC、基础模型、默认 Saisho Utane 音色、运行库及许可声明。默认选择 AI 清晰人声，不含个人设备选择，监听关闭。
+
+GitHub 提供四个编号 ZIP 分卷、`Join-Release.ps1`、校验值及源码／验收记录。已实际运行合并脚本，结果与原 ZIP 一致；公开发布前，九个上传附件均与 GitHub 返回的 SHA-256 和大小匹配。完整 ZIP SHA-256：`6ef42f3d4e0d0ee12574ec75db03641b4c156b0a60ea9fdc38bcc0d60eb6b415`。程序 SHA-256：`512da70545fba42e512e9f9a9a5d9c5ec59562043749fd0280f7c6f8d4102133`。
+
+本次重新通过 53 项 Rust、14 项编辑器测试、TypeScript、优化构建、未绕过的打包门禁及独立解压检查。最终 exe 使用真实 TANCHJIM 麦克风到 VB-CABLE、5 ms 缓冲、监听关闭，连续运行 60 秒，应用欠载和溢出均为零。原生模型／索引选择覆盖中文及空格路径、取消和重启持久化，均通过。解压包自带 Python／CUDA 成功产生有限且非零的变声音频，exe 内嵌 worker 与已验证源码一致。测试没有物理播放或保存麦克风录音；GPU 探测首次载入运行环境、模型及处理共耗时 78.11 秒。
+
+此前 30 分钟合成负载鉴定作为音频实现未变的历史证据保留，不宣称此发布重新完成声学延迟或 30 分钟长测。下文的饱和 CPU 欠载及最终游戏／帧率复测继续保留为待办。证据位于 `research/audio-acceptance/artifacts/20261107-release-v0.4.1/`，本地完整包位于 `release/v0.4.1/`。
+
 ## 2026-11-06 本地优化构建
 
 替换程序：`research/audio-acceptance/artifacts/20261106-022300-monitor-headroom/isMyMicThatBad-optimized.exe`。关闭旧程序，将此文件复制到原便携目录并命名为 `isMyMicThatBad.exe`，保留原运行库、资源、`portable.marker` 和 `data/`。SHA-256：`0dd4236f9d0b47183bf1f0bcb804b86090b38613a64602e73115bff61ba4c682`。
